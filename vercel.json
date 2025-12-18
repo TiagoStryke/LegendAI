@@ -1,4 +1,11 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "functions": {
+    "app/api/**": {
+      "includeFiles": "node_modules/tiktoken/**"
+    }
+  },
   "headers": [
     {
       "source": "/api/(.*)",

@@ -5,11 +5,25 @@ const nextConfig = {
   images: {
     unoptimized: true
   },
-  webpack(config) {
+  // Configurar output file tracing para incluir arquivos WASM do tiktoken
+  experimental: {
+    outputFileTracingIncludes: {
+      '/api': ['./node_modules/tiktoken/**/*'],
+    },
+  },
+  webpack(config, { isServer }) {
     config.experiments = {
       asyncWebAssembly: true,
       layers: true,
     };
+
+    // Configuração para incluir arquivos WASM no bundle do servidor
+    if (isServer) {
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        'tiktoken': require.resolve('tiktoken'),
+      };
+    }
 
     return config;
   },
