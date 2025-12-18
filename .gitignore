@@ -36,3 +36,5 @@ node_modules/
 # Testing
 coverage/
 .nyc_output
+.vercel
+.env*.local
