@@ -1,19 +1,19 @@
 <div align="center">
 
-![SRT PT AI Translator](./preview.png)
+![LegendAI](./preview.png)
 
-# 🎬 SRT PT AI Translator
+# 🎬 LegendAI
 
-### Tradutor de Legendas Inteligente com IA
+### Tradutor Inteligente de Legendas com IA
 
-Traduza arquivos de legenda SRT para Português Brasileiro com precisão e naturalidade usando o poder da Inteligência Artificial.
+Traduza legendas para qualquer idioma com precisão e naturalidade usando o poder da Inteligência Artificial. Suporte para SRT, VTT, ASS e mais formatos.
 
 [![Next.js](https://img.shields.io/badge/Next.js-14.0.4-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org/)
 [![Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-000000?style=for-the-badge&logo=vercel)](https://vercel.com)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](./LICENSE)
 
-[Demo ao Vivo](https://srt-pt-ai.vercel.app) • [Reportar Bug](https://github.com/TiagoStryke/srt-pt-ai/issues) • [Solicitar Feature](https://github.com/TiagoStryke/srt-pt-ai/issues)
+[Demo ao Vivo](https://uselegendai.vercel.app) • [Reportar Bug](https://github.com/TiagoStryke/LegendAI/issues) • [Solicitar Feature](https://github.com/TiagoStryke/LegendAI/issues)
 
 </div>
 
@@ -31,7 +31,7 @@ Traduza arquivos de legenda SRT para Português Brasileiro com precisão e natur
 
 ## 🚀 Demo
 
-Acesse a aplicação em produção: **[srt-pt-ai.vercel.app](https://srt-pt-ai.vercel.app)**
+Acesse a aplicação em produção: **[uselegendai.vercel.app](https://uselegendai.vercel.app)**
 
 ## 📋 Pré-requisitos
 
@@ -46,8 +46,8 @@ Antes de começar, você precisará ter instalado:
 ### 1. Clone o repositório
 
 ```bash
-git clone https://github.com/TiagoStryke/srt-pt-ai.git
-cd srt-pt-ai
+git clone https://github.com/TiagoStryke/LegendAI.git
+cd legendai
 ```
 
 ### 2. Instale as dependências
