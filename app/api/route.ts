@@ -207,7 +207,9 @@ const retrieveTranslationWithQuotaHandling = async (
 	}
 	
 	const googleProvider = createGoogleGenerativeAI({ apiKey });
-	const geminiModel = googleProvider("gemini-2.0-flash-exp");
+	// Usando modelo ESTÁVEL (gemini-1.5-flash) ao invés do experimental
+	// gemini-2.0-flash-exp foi descontinuado/mudou limites em 2025
+	const geminiModel = googleProvider("gemini-1.5-flash");
 	
 	for (let attempt = 0; attempt < maxRetries; attempt++) {
 		try {
