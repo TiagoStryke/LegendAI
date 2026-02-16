@@ -9,6 +9,7 @@
 ## 📋 Problema Reportado
 
 **Sintomas:**
+
 - Todas as legendas estão dando "quota error"
 - Acontece tanto no Render quanto no Vercel
 - Legendas pequenas (700 linhas) que ANTES funcionavam agora falham
@@ -23,11 +24,13 @@
 ### Causa Raiz: **Modelo Experimental Descontinuado**
 
 O código estava usando:
+
 ```typescript
-const geminiModel = googleProvider("gemini-2.0-flash-exp"); // ❌ EXPERIMENTAL
+const geminiModel = googleProvider('gemini-2.0-flash-exp'); // ❌ EXPERIMENTAL
 ```
 
 **O que aconteceu:**
+
 1. **Final de 2025:** Google descontinuou ou mudou drasticamente os limites do modelo `gemini-2.0-flash-exp`
 2. Modelo experimental não é garantido para produção
 3. Google provavelmente reduziu rate limits do free tier
@@ -51,18 +54,21 @@ const geminiModel = googleProvider("gemini-2.0-flash-exp"); // ❌ EXPERIMENTAL
 ### Mudança #1: Trocar para Modelo Estável
 
 **ANTES:**
+
 ```typescript
-const geminiModel = googleProvider("gemini-2.0-flash-exp"); // Experimental
+const geminiModel = googleProvider('gemini-2.0-flash-exp'); // Experimental
 ```
 
 **DEPOIS:**
+
 ```typescript
 // Usando modelo ESTÁVEL (gemini-1.5-flash) ao invés do experimental
 // gemini-2.0-flash-exp foi descontinuado/mudou limites em 2025
-const geminiModel = googleProvider("gemini-1.5-flash");
+const geminiModel = googleProvider('gemini-1.5-flash');
 ```
 
 **Por que gemini-1.5-flash?**
+
 - ✅ Modelo **ESTÁVEL** (não experimental)
 - ✅ Google garante suporte de longo prazo
 - ✅ Mesma qualidade de tradução
@@ -74,11 +80,13 @@ const geminiModel = googleProvider("gemini-1.5-flash");
 ## 🎯 TESTE IMEDIATO
 
 **Depois do deploy, testar:**
+
 1. Legenda pequena (100 linhas)
 2. Legenda média (700 linhas)
 3. Legenda grande (2000 linhas)
 
 **Verificar se:**
+
 - ✅ Não dá mais quota error
 - ✅ Tradução funciona normalmente
 - ✅ Qualidade mantida
@@ -94,11 +102,13 @@ npm install @ai-sdk/google@latest ai@latest
 ```
 
 **Mudanças de Breaking:**
+
 - SDK v3.x tem API diferente
 - Precisa ajustar código do route.ts
 - Ver documentação: https://sdk.vercel.ai/providers/ai-sdk-providers/google-generative-ai
 
 **Benefícios:**
+
 - ✅ Suporte aos modelos mais novos
 - ✅ Melhor handling de rate limits
 - ✅ Correções de bugs
@@ -113,6 +123,7 @@ npm install @ai-sdk/google@latest ai@latest
 **Problema:** Sistema atual é REATIVO (só age DEPOIS do erro 429)
 
 **Solução:** Implementar rate limiter PREVENTIVO
+
 - Rastrear requisições/minuto ANTES de chamar API
 - Aguardar automaticamente se próximo do limite
 - Mostrar feedback ao usuário: "Aguardando rate limit (5s)..."
@@ -138,15 +149,17 @@ npm install @ai-sdk/google@latest ai@latest
 ## 📊 Novos Limites do Gemini (2026)
 
 ### Free Tier:
+
 - **Requisições:** 15 req/min (antes era 10 req/min) ✅ AUMENTOU!
 - **Tokens:** 1 milhão tokens/dia
 - **RPD:** 1,500 requisições/dia
-- **Modelos disponíveis:** 
+- **Modelos disponíveis:**
   - ✅ `gemini-1.5-flash` (estável, rápido)
   - ✅ `gemini-1.5-pro` (melhor qualidade, mais lento)
   - ❌ `gemini-2.0-flash-exp` (descontinuado para free tier)
 
 ### Paid Tier:
+
 - **Requisições:** 2000 req/min
 - **Tokens:** Ilimitado
 - **Modelos:** Todos, incluindo Gemini 2.0
@@ -158,17 +171,20 @@ npm install @ai-sdk/google@latest ai@latest
 ## 🚀 Plano de Ação Completo
 
 ### ✅ FEITO (Imediato)
+
 - [x] Trocar modelo `gemini-2.0-flash-exp` → `gemini-1.5-flash`
 - [x] Deploy no Vercel e Render
 - [x] Documentar problema e solução
 
 ### ⏳ CURTO PRAZO (Esta Semana)
+
 - [ ] **DIA 1:** Testar solução em produção
 - [ ] **DIA 2-3:** Atualizar SDK (@ai-sdk/google v3.x + ai v6.x)
 - [ ] **DIA 4-5:** Implementar rate limiting preventivo
 - [ ] **DIA 6-7:** Resolver timeout com múltiplas requisições
 
 ### ⏳ MÉDIO PRAZO (Próximas 2 Semanas)
+
 - [ ] Refatorar route.ts em módulos (851 linhas → 150 linhas)
 - [ ] Implementar TMDb para contexto inteligente
 - [ ] Atualizar todas as dependências (Next 16, React 19, etc.)
@@ -178,11 +194,13 @@ npm install @ai-sdk/google@latest ai@latest
 ## 📝 Lições Aprendidas
 
 ### ❌ O que NÃO fazer:
+
 1. **Usar modelos experimentais em produção** (gemini-2.0-flash-exp)
 2. **Deixar SDK desatualizado por meses** (1.0.12 → 3.0.29)
 3. **Assumir que Google não vai mudar limites** (mudaram em 2025)
 
 ### ✅ O que fazer:
+
 1. **Sempre usar modelos estáveis** (gemini-1.5-flash, gemini-1.5-pro)
 2. **Atualizar SDK regularmente** (pelo menos a cada 3 meses)
 3. **Monitorar mudanças nas APIs de terceiros** (Google, Vercel, etc.)
@@ -206,11 +224,13 @@ npm install @ai-sdk/google@latest ai@latest
 ### Se free tier não for suficiente:
 
 **Opção 1: Google AI Studio Pro**
+
 - $0.35 por 1M tokens (input)
 - $1.05 por 1M tokens (output)
 - Estimativa: ~$2-5/mês para uso moderado
 
 **Opção 2: Implementar sistema de quotas**
+
 - Limitar traduções por usuário/dia
 - Oferecer tier pago para uso ilimitado
 - Ver [ROADMAP.md](./ROADMAP.md) - Item #13 (Modelo Freemium)
