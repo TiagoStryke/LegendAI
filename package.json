@@ -1,7 +1,12 @@
 {
-  "name": "srt-pt-ai",
-  "version": "0.1.0",
+  "name": "legendai",
+  "version": "0.2.0",
   "private": true,
+  "homepage": "https://uselegendai.vercel.app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TiagoStryke/LegendAI"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
