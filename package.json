@@ -14,15 +14,16 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@ai-sdk/google": "^1.0.12",
-    "ai": "^4.0.22",
+    "@ai-sdk/google": "^3.0.29",
+    "ai": "^6.0.86",
     "eventsource-parser": "^1.1.1",
     "humanloop": "^0.5.36",
     "next": "14.0.4",
     "openai": "^4.77.0",
     "react": "^18",
     "react-dom": "^18",
-    "tiktoken": "^1.0.12"
+    "tiktoken": "^1.0.12",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^20",

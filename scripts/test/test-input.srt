@@ -1,0 +1,46 @@
+1
+00:00:01,000 --> 00:00:03,500
+Hello, how are you today?
+
+2
+00:00:03,500 --> 00:00:06,000
+I'm fine, thank you very much!
+
+3
+00:00:06,000 --> 00:00:09,200
+-What's your name?
+-My name is John.
+
+4
+00:00:09,200 --> 00:00:12,000
+Nice to meet you, John!
+Where are you from?
+
+5
+00:00:12,000 --> 00:00:15,500
+I'm from New York.
+It's a beautiful city.
+
+6
+00:00:15,500 --> 00:00:18,000
+Have you been there?
+
+7
+00:00:18,000 --> 00:00:21,000
+-Yes, I have!
+-When did you go?
+-Last year in summer.
+
+8
+00:00:21,000 --> 00:00:24,500
+That's wonderful!
+I love that city too.
+
+9
+00:00:24,500 --> 00:00:27,000
+What do you do for work?
+
+10
+00:00:27,000 --> 00:00:31,000
+I'm a software engineer.
+I work with web applications.

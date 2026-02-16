@@ -212,9 +212,8 @@ const retrieveTranslationWithQuotaHandling = async (
 	}
 
 	const googleProvider = createGoogleGenerativeAI({ apiKey });
-	// Usando modelo ESTÁVEL (gemini-1.5-flash) ao invés do experimental
-	// gemini-2.0-flash-exp foi descontinuado/mudou limites em 2025
-	const geminiModel = googleProvider('gemini-1.5-flash');
+	// Usando gemini-2.5-flash (modelo atual/estável para 2026)
+	const geminiModel = googleProvider('gemini-2.5-flash');
 
 	for (let attempt = 0; attempt < maxRetries; attempt++) {
 		try {
@@ -227,16 +226,15 @@ const retrieveTranslationWithQuotaHandling = async (
 				systemPrompt += `\n\nCONTEXTO: ${fileContext} Use este contexto para melhorar a qualidade da tradução, adaptando o vocabulário, estilo e tom apropriados para o conteúdo específico.`;
 			}
 
+			// Gemini não suporta role 'system' - colocar instruções no prompt user
+			const fullPrompt = `${systemPrompt}\n\nTraduza estas legendas para português brasileiro: ${text}`;
+
 			const { text: translatedText } = await generateText({
 				model: geminiModel,
 				messages: [
 					{
-						role: 'system',
-						content: systemPrompt,
-					},
-					{
 						role: 'user',
-						content: `Traduza estas legendas para português brasileiro: ${text}`,
+						content: fullPrompt,
 					},
 				],
 			});
