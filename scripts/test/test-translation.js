@@ -16,7 +16,7 @@ const path = require('path');
 // ============================================================================
 
 // API Key hardcoded (mesma do site)
-const API_KEY = 'AIzaSyAWAF5LUAuUYji5fZJiQ_Jvv1ZtLmSIfW8';
+const API_KEY = process.env.GOOGLE_API_KEY;
 
 // Constantes (mesmas do site)
 const MAX_TOKENS_IN_SEGMENT = 400;

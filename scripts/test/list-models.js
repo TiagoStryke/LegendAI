@@ -3,7 +3,7 @@
  */
 const https = require('https');
 
-const API_KEY = 'AIzaSyAWAF5LUAuUYji5fZJiQ_Jvv1ZtLmSIfW8';
+const API_KEY = process.env.GOOGLE_API_KEY;
 
 // Testar API v1
 console.log('🔍 Listando modelos disponíveis na API v1...\n');

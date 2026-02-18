@@ -102,7 +102,7 @@ const LANGUAGE = 'Portuguese (Brazil)'; // Idioma alvo
 O script usa a API key **hardcoded** no código:
 
 ```javascript
-const API_KEY = 'AIzaSyAWAF5LUAuUYji5fZJiQ_Jvv1ZtLmSIfW8';
+
 ```
 
 ⚠️ **IMPORTANTE**: Esta é a mesma key configurada no site. Se o script funcionar mas o site não, o problema é no frontend!
