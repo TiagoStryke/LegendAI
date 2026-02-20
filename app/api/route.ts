@@ -199,164 +199,125 @@ const retrieveTranslationWithQuotaHandling = async (
 	language: string,
 	apiKey: string,
 	maxRetries: number = 3,
-	originalSegments?: any[], // Para re-tentar com chunks menores
-	onQuotaError?: (retryAfter: number) => Promise<void>, // Callback para notificar frontend sobre quota
-	onQuotaRetry?: () => Promise<void>, // Callback para notificar frontend sobre retry
-	fileContext?: string, // Contexto extraído do nome do arquivo
+	originalSegments?: any[],
+	onQuotaError?: (retryAfter: number) => Promise<void>,
+	onQuotaRetry?: () => Promise<void>,
+	fileContext?: string,
 ): Promise<{ result: string; retryAfter?: number }> => {
-	// Validação básica da chave
-	if (apiKey.trim().length < 30) {
-		throw new Error(
-			'Chave API inválida: formato incorreto ou comprimento muito curto para uma chave do Google Gemini.',
-		);
+	// ===== SUPORTE A MÚLTIPLAS API KEYS =====
+	const keys = apiKey
+		.split(',')
+		.map((k) => k.trim())
+		.filter((k) => k.length >= 30);
+
+	if (keys.length === 0) {
+		throw new Error('Nenhuma API key válida fornecida.');
 	}
 
-	const googleProvider = createGoogleGenerativeAI({ apiKey });
-	// Usando gemini-2.5-flash (modelo atual/estável para 2026)
-	const geminiModel = googleProvider('gemini-2.5-flash');
+	let lastError: any = null;
 
-	for (let attempt = 0; attempt < maxRetries; attempt++) {
-		try {
-			// Construir o prompt do sistema com contexto do arquivo
-			let systemPrompt =
-				"Você é um tradutor profissional especializado em legendas de filmes e séries, com foco especial em português brasileiro. IMPORTANTE: Preserve cuidadosamente toda a formatação original, incluindo tags HTML como <i> para itálico. Separe os segmentos de tradução com o símbolo '|'. Mantenha o estilo e tom da linguagem original. Nomes próprios não devem ser traduzidos. Preserve os nomes de programas como 'The Amazing Race'. CRÍTICO: Preserve EXATAMENTE a estrutura de quebras de linha do texto original. Quando encontrar diálogos com hífens em linhas separadas (como '-Texto1\\n-Texto2\\n-Texto3'), mantenha cada fala em sua própria linha com quebra de linha (\\n). NUNCA una múltiplas falas em uma única linha. Exemplo: '-Olá.\\n-Oi!' deve se tornar '-Olá.\\n-Oi!' e NÃO '-Olá. -Oi!'. Mantenha quebras de linha originais com \\n.";
+	// Percorre cada key
+	for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+		const currentKey = keys[keyIndex];
 
-			// Adicionar contexto do arquivo se disponível
-			if (fileContext) {
-				systemPrompt += `\n\nCONTEXTO: ${fileContext} Use este contexto para melhorar a qualidade da tradução, adaptando o vocabulário, estilo e tom apropriados para o conteúdo específico.`;
-			}
+		const googleProvider = createGoogleGenerativeAI({
+			apiKey: currentKey,
+		});
 
-			// Gemini não suporta role 'system' - colocar instruções no prompt user
-			const fullPrompt = `${systemPrompt}\n\nTraduza estas legendas para português brasileiro: ${text}`;
+		const geminiModel = googleProvider('gemini-2.5-flash');
 
-			const { text: translatedText } = await generateText({
-				model: geminiModel,
-				messages: [
-					{
-						role: 'user',
-						content: fullPrompt,
-					},
-				],
-			});
+		for (let attempt = 0; attempt < maxRetries; attempt++) {
+			try {
+				let systemPrompt =
+					"Você é um tradutor profissional especializado em legendas de filmes e séries, com foco especial em português brasileiro. IMPORTANTE: Preserve cuidadosamente toda a formatação original, incluindo tags HTML como <i> para itálico. Separe os segmentos de tradução com o símbolo '|'. Mantenha o estilo e tom da linguagem original. Nomes próprios não devem ser traduzidos. Preserve os nomes de programas como 'The Amazing Race'. CRÍTICO: Preserve EXATAMENTE a estrutura de quebras de linha do texto original. Quando encontrar diálogos com hífens em linhas separadas (como '-Texto1\\n-Texto2'), mantenha cada fala em sua própria linha com quebra de linha (\\n). NUNCA una múltiplas falas em uma única linha.";
 
-			// Verificar se a resposta foi truncada
-			const inputSegments = text.split('|').length;
-			const outputSegments = translatedText.split('|').length;
-
-			if (outputSegments < inputSegments) {
-				const missingSegments = inputSegments - outputSegments;
-
-				// Se perdeu segmentos E temos os segmentos originais, vamos dividir e tentar novamente
-				if (
-					missingSegments > 0 &&
-					originalSegments &&
-					originalSegments.length > 1
-				) {
-					throw new Error('SPLIT_CHUNK_NEEDED');
+				if (fileContext) {
+					systemPrompt += `\n\nCONTEXTO: ${fileContext}`;
 				}
 
-				// Para chunks pequenos, tenta novamente uma vez
-				if (attempt === 0 && inputSegments <= 10) {
-					throw new Error('Response truncated - retry needed');
-				}
-			}
+				const fullPrompt = `${systemPrompt}\n\nTraduza estas legendas para português brasileiro: ${text}`;
 
-			return { result: translatedText };
-		} catch (error: any) {
-			// Se precisamos dividir o chunk, propaga o erro
-			if (error.message === 'SPLIT_CHUNK_NEEDED') {
-				throw error;
-			}
+				const { text: translatedText } = await generateText({
+					model: geminiModel,
+					messages: [
+						{
+							role: 'user',
+							content: fullPrompt,
+						},
+					],
+				});
 
-			// Check for authentication errors first
-			if (error instanceof Error) {
-				const errorMessage = error.message.toLowerCase();
-				if (
-					errorMessage.includes('403') ||
-					errorMessage.includes('auth') ||
-					errorMessage.includes('authentication') ||
-					errorMessage.includes('unauthorized') ||
-					errorMessage.includes('forbidden') ||
-					errorMessage.includes('invalid key') ||
-					errorMessage.includes('invalid api key') ||
-					errorMessage.includes('api key not valid') ||
-					errorMessage.includes('missing api key') ||
-					errorMessage.includes('api key is required') ||
-					errorMessage.includes('gemini api key') ||
-					errorMessage.includes("method doesn't allow unregistered callers") ||
-					errorMessage.includes('caller not authorized')
-				) {
-					// Don't retry authentication errors
-					if (
-						errorMessage.includes("method doesn't allow unregistered callers")
-					) {
-						throw new Error(
-							'Erro de autenticação: O Google Gemini não reconheceu sua chave API. Verifique se a chave foi copiada corretamente e é válida.',
-						);
-					} else if (
-						errorMessage.includes('invalid key') ||
-						errorMessage.includes('invalid api key')
-					) {
-						throw new Error(
-							'Erro de autenticação: Chave API inválida. Verifique se obteve a chave correta do Google AI Studio (https://aistudio.google.com/app/apikey).',
-						);
-					} else {
-						throw new Error(
-							'Erro de autenticação: Chave de API inválida ou não autorizada. Verifique sua chave API do Google Gemini.',
-						);
+				// ===== VERIFICA TRUNCAMENTO =====
+				const inputSegments = text.split('|').length;
+				const outputSegments = translatedText.split('|').length;
+
+				if (outputSegments < inputSegments) {
+					if (originalSegments && originalSegments.length > 1) {
+						throw new Error('SPLIT_CHUNK_NEEDED');
 					}
 				}
-			}
-			// Check for quota errors
-			if (isQuotaError(error)) {
-				const retryAfter = 65; // 65 seconds for quota reset
 
-				if (attempt === maxRetries - 1) {
-					// Last attempt, throw quota error to be handled by caller
-					throw new Error('QUOTA_ERROR');
-				}
-
-				// Notify frontend about quota error if callback provided
-				if (onQuotaError) {
-					await onQuotaError(retryAfter);
-				}
-
-				// Wait before retrying
-				await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
-
-				// Notify frontend about retry if callback provided
-				if (onQuotaRetry) {
+				// Se chegou aqui, funcionou
+				if (keyIndex > 0 && onQuotaRetry) {
 					await onQuotaRetry();
 				}
 
-				continue;
-			}
+				return { result: translatedText };
+			} catch (error: any) {
+				lastError = error;
 
-			// Additional heuristic: if we get repeated failures on small chunks,
-			// it might be a quota issue that we didn't detect properly
-			if (attempt >= 1 && text.length < 1000) {
-				// Force quota handling after 2 failed attempts on small chunks
-				if (attempt >= 2) {
+				// ===== NÃO ROTACIONAR EM ERRO DE AUTENTICAÇÃO =====
+				const errorMessage = error?.message?.toLowerCase() || '';
+
+				if (
+					errorMessage.includes('auth') ||
+					errorMessage.includes('invalid key') ||
+					errorMessage.includes('unauthorized') ||
+					errorMessage.includes('forbidden')
+				) {
+					throw new Error(`Erro de autenticação na API key ${keyIndex + 1}.`);
+				}
+
+				// ===== SE PRECISAR DIVIDIR CHUNK =====
+				if (error.message === 'SPLIT_CHUNK_NEEDED') {
+					throw error;
+				}
+
+				// ===== SE FOR QUOTA =====
+				if (isQuotaError(error)) {
+					// Se ainda tem outra key, tenta próxima imediatamente
+					if (keyIndex < keys.length - 1) {
+						if (onQuotaError) {
+							await onQuotaError(0);
+						}
+						break; // sai do retry e vai pra próxima key
+					}
+
+					// Se é a última key, aplica delay e retry normal
+					if (attempt < maxRetries - 1) {
+						const delay = Math.pow(2, attempt) * 1000;
+						await new Promise((r) => setTimeout(r, delay));
+						continue;
+					}
+
 					throw new Error('QUOTA_ERROR');
 				}
 
-				// Wait a bit longer for potential quota reset
-				const extraDelay = 30000; // 30 seconds extra delay
-				await new Promise((resolve) => setTimeout(resolve, extraDelay));
-			}
+				// ===== RETRY NORMAL =====
+				if (attempt < maxRetries - 1) {
+					const delay = Math.pow(2, attempt) * 1000;
+					await new Promise((r) => setTimeout(r, delay));
+					continue;
+				}
 
-			// For other errors, retry with exponential backoff
-			if (attempt < maxRetries - 1) {
-				const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
-				await new Promise((resolve) => setTimeout(resolve, delay));
-				continue;
+				throw error;
 			}
-
-			throw error;
 		}
 	}
 
-	throw new Error('Max retries exceeded');
+	throw (
+		lastError || new Error('Todas as API keys falharam ou atingiram quota.')
+	);
 };
 
 export async function POST(request: Request) {
