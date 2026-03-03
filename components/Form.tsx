@@ -41,6 +41,57 @@ const SrtForm: React.FC = () => {
 		percentage: 0,
 		message: 'Ready to translate',
 	});
+	const [wakeLock, setWakeLock] = useState<any>(null); // WakeLockSentinel
+
+	// ===== WAKE LOCK: Mantém PC acordado durante tradução =====
+	useEffect(() => {
+		const requestWakeLock = async () => {
+			try {
+				if ('wakeLock' in navigator && (navigator as any).wakeLock) {
+					const lock = await (navigator as any).wakeLock.request('screen');
+					setWakeLock(lock);
+					console.log('💤 Wake Lock ativado - PC não vai entrar em sleep');
+					
+					// Listener para quando o lock é liberado (ex: aba perde foco)
+					lock.addEventListener('release', () => {
+						console.log('💤 Wake Lock liberado');
+					});
+				}
+			} catch (err) {
+				console.error('Erro ao ativar Wake Lock:', err);
+			}
+		};
+
+		const releaseWakeLock = async () => {
+			if (wakeLock) {
+				try {
+					await wakeLock.release();
+					setWakeLock(null);
+					console.log('💤 Wake Lock desativado - PC pode entrar em sleep');
+				} catch (err) {
+					console.error('Erro ao liberar Wake Lock:', err);
+				}
+			}
+		};
+
+		// Ativa quando está traduzindo, desativa quando termina/erro
+		if (translationState.status === 'translating' || 
+		    translationState.status === 'quota_error' || 
+		    translationState.status === 'retry') {
+			requestWakeLock();
+		} else if (translationState.status === 'complete' || 
+		           translationState.status === 'error' ||
+		           translationState.status === 'idle') {
+			releaseWakeLock();
+		}
+
+		// Cleanup: libera o lock quando o componente desmonta
+		return () => {
+			if (wakeLock) {
+				wakeLock.release().catch(() => {});
+			}
+		};
+	}, [translationState.status]);
 
 	// Load API key from localStorage on mount
 	useEffect(() => {
@@ -529,6 +580,16 @@ const SrtForm: React.FC = () => {
 						status={translationState.status}
 						retryAfter={translationState.retryAfter}
 					/>
+					
+					{/* Wake Lock Indicator */}
+					{wakeLock && !wakeLock.released && (
+						<div className="mt-2 px-4 py-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+							<div className="flex items-center gap-2 text-sm text-blue-700 dark:text-blue-300">
+								<span className="text-lg">💤</span>
+								<span className="font-medium">Wake Lock ativo - seu computador não entrará em modo sleep</span>
+							</div>
+						</div>
+					)}
 				</div>
 			)}
 
