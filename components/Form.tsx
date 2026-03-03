@@ -172,9 +172,20 @@ const SrtForm: React.FC = () => {
 											result: finalResult,
 										}));
 									} else if (data.type === 'keep_alive') {
-										// ===== KEEP-ALIVE: Abre nova aba para manter servidor ativo =====
+										// ===== KEEP-ALIVE: Faz requisição silenciosa para manter servidor ativo =====
 										if (data.keepAliveUrl) {
-											window.open(data.keepAliveUrl, '_blank');
+											// Requisição silenciosa em background (não abre aba)
+											fetch(data.keepAliveUrl, {
+												method: 'HEAD', // HEAD é mais leve que GET
+												mode: 'no-cors', // Evita problemas de CORS
+											}).catch(() => {
+												// Ignora erros - o importante é fazer a requisição
+											});
+
+											console.log(
+												'🔄 Keep-alive ping sent to:',
+												data.keepAliveUrl,
+											);
 										}
 										// Atualiza estado sem mudar o status atual
 										setTranslationState((prev) => ({
