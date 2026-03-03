@@ -10,7 +10,13 @@ export const runtime = 'nodejs';
 const MAX_TOKENS_IN_SEGMENT = 400; // Reduzido para evitar truncamento da API Gemini
 
 interface TranslationProgress {
-	type: 'progress' | 'quota_error' | 'retry' | 'complete' | 'error';
+	type:
+		| 'progress'
+		| 'quota_error'
+		| 'retry'
+		| 'complete'
+		| 'error'
+		| 'keep_alive';
 	translated: number;
 	total: number;
 	percentage: number;
@@ -18,6 +24,7 @@ interface TranslationProgress {
 	totalChunks?: number;
 	message?: string;
 	retryAfter?: number;
+	keepAliveUrl?: string; // URL para abrir em nova aba
 }
 
 /**
@@ -166,6 +173,111 @@ const extractFileContext = (filename: string): string => {
 	return context;
 };
 
+// ===== KEEP-ALIVE PARA RENDER =====
+// Evita que o servidor Render caia durante traduções longas
+const KEEP_ALIVE_INTERVAL_MS = 3 * 60 * 1000; // 3 minutos
+const KEEP_ALIVE_URL = 'https://srt-pt-ai.onrender.com/';
+
+// ===== CACHE DE KEYS COM QUOTA ESGOTADA =====
+// Armazena timestamp de quando cada key falhou por quota
+const quotaFailedKeys = new Map<string, number>();
+const QUOTA_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutos de cooldown
+
+// ===== RATE LIMITER POR KEY =====
+// Controla velocidade de requisições para evitar 429 TooManyRequests
+interface RequestHistory {
+	timestamps: number[]; // Últimas requisições
+	lastRequest: number; // Timestamp da última requisição
+}
+
+const keyRequestHistory = new Map<string, RequestHistory>();
+const MAX_RPM = 10; // Requests por minuto - conservador para evitar rate limit
+const MIN_DELAY_MS = 500; // Delay mínimo entre requisições (0.5s)
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // Janela de 1 minuto
+
+/**
+ * Aguarda o tempo necessário para respeitar o rate limit da key
+ * Evita erros 429 TooManyRequests
+ */
+const waitForRateLimit = async (key: string): Promise<void> => {
+	const now = Date.now();
+	let history = keyRequestHistory.get(key);
+
+	if (!history) {
+		history = { timestamps: [], lastRequest: 0 };
+		keyRequestHistory.set(key, history);
+	}
+
+	// Remove timestamps fora da janela de 1 minuto
+	history.timestamps = history.timestamps.filter(
+		(ts) => now - ts < RATE_LIMIT_WINDOW_MS,
+	);
+
+	// Verifica se precisa esperar
+	if (history.timestamps.length >= MAX_RPM) {
+		// Atingiu o limite - precisa esperar até a requisição mais antiga sair da janela
+		const oldestRequest = history.timestamps[0];
+		const waitTime = RATE_LIMIT_WINDOW_MS - (now - oldestRequest) + 100; // +100ms de margem
+
+		if (waitTime > 0) {
+			await new Promise((resolve) => setTimeout(resolve, waitTime));
+		}
+
+		// Atualiza now após o wait
+		const newNow = Date.now();
+		history.timestamps = history.timestamps.filter(
+			(ts) => newNow - ts < RATE_LIMIT_WINDOW_MS,
+		);
+	}
+
+	// Garante delay mínimo entre requisições consecutivas
+	const timeSinceLastRequest = now - history.lastRequest;
+	if (timeSinceLastRequest < MIN_DELAY_MS) {
+		await new Promise((resolve) =>
+			setTimeout(resolve, MIN_DELAY_MS - timeSinceLastRequest),
+		);
+	}
+
+	// Registra a nova requisição
+	const requestTime = Date.now();
+	history.timestamps.push(requestTime);
+	history.lastRequest = requestTime;
+};
+
+/**
+ * Ordena as keys priorizando as que não falharam recentemente
+ * Keys que falharam por quota vão para o final da lista
+ */
+const sortKeysByAvailability = (keys: string[]): string[] => {
+	const now = Date.now();
+
+	// Separa keys em disponíveis e possivelmente esgotadas
+	const available: string[] = [];
+	const recentlyFailed: Array<{ key: string; failedAt: number }> = [];
+
+	for (const key of keys) {
+		const failedAt = quotaFailedKeys.get(key);
+
+		if (!failedAt) {
+			// Nunca falhou ou foi limpa do cache
+			available.push(key);
+		} else if (now - failedAt > QUOTA_COOLDOWN_MS) {
+			// Falhou mas já passou o cooldown
+			quotaFailedKeys.delete(key); // Limpa do cache
+			available.push(key);
+		} else {
+			// Falhou recentemente
+			recentlyFailed.push({ key, failedAt });
+		}
+	}
+
+	// Ordena as que falharam recentemente pela mais antiga (mais chance de ter recuperado)
+	recentlyFailed.sort((a, b) => a.failedAt - b.failedAt);
+
+	// Retorna: disponíveis primeiro, depois as que falharam (mais antiga primeiro)
+	return [...available, ...recentlyFailed.map((x) => x.key)];
+};
+
 const isQuotaError = (error: any): boolean => {
 	const errorMessage = error?.message?.toLowerCase() || '';
 	const errorString = String(error).toLowerCase();
@@ -205,7 +317,7 @@ const retrieveTranslationWithQuotaHandling = async (
 	fileContext?: string,
 ): Promise<{ result: string; retryAfter?: number }> => {
 	// ===== SUPORTE A MÚLTIPLAS API KEYS =====
-	const keys = apiKey
+	let keys = apiKey
 		.split(',')
 		.map((k) => k.trim())
 		.filter((k) => k.length >= 30);
@@ -213,6 +325,9 @@ const retrieveTranslationWithQuotaHandling = async (
 	if (keys.length === 0) {
 		throw new Error('Nenhuma API key válida fornecida.');
 	}
+
+	// ===== ORDENA KEYS PRIORIZANDO AS DISPONÍVEIS =====
+	keys = sortKeysByAvailability(keys);
 
 	let lastError: any = null;
 
@@ -228,6 +343,9 @@ const retrieveTranslationWithQuotaHandling = async (
 
 		for (let attempt = 0; attempt < maxRetries; attempt++) {
 			try {
+				// ===== RATE LIMITING: Aguarda antes de fazer requisição =====
+				await waitForRateLimit(currentKey);
+
 				let systemPrompt =
 					"Você é um tradutor profissional especializado em legendas de filmes e séries, com foco especial em português brasileiro. IMPORTANTE: Preserve cuidadosamente toda a formatação original, incluindo tags HTML como <i> para itálico. Separe os segmentos de tradução com o símbolo '|'. Mantenha o estilo e tom da linguagem original. Nomes próprios não devem ser traduzidos. Preserve os nomes de programas como 'The Amazing Race'. CRÍTICO: Preserve EXATAMENTE a estrutura de quebras de linha do texto original. Quando encontrar diálogos com hífens em linhas separadas (como '-Texto1\\n-Texto2'), mantenha cada fala em sua própria linha com quebra de linha (\\n). NUNCA una múltiplas falas em uma única linha.";
 
@@ -258,6 +376,9 @@ const retrieveTranslationWithQuotaHandling = async (
 				}
 
 				// Se chegou aqui, funcionou
+				// Remove a key do cache de falhas (se estiver lá)
+				quotaFailedKeys.delete(currentKey);
+
 				if (keyIndex > 0 && onQuotaRetry) {
 					await onQuotaRetry();
 				}
@@ -285,6 +406,29 @@ const retrieveTranslationWithQuotaHandling = async (
 
 				// ===== SE FOR QUOTA =====
 				if (isQuotaError(error)) {
+					// Marca a key como esgotada no cache
+					quotaFailedKeys.set(currentKey, Date.now());
+
+					// ===== TRATAMENTO ESPECIAL PARA 429 (Rate Limit) =====
+					const is429 =
+						error?.status === 429 ||
+						error?.code === 429 ||
+						error?.statusCode === 429 ||
+						errorMessage.includes('too many requests') ||
+						errorMessage.includes('rate limit');
+
+					if (is429) {
+						// Limpa o histórico de requisições desta key para resetar o contador
+						keyRequestHistory.delete(currentKey);
+
+						// Aplica cooldown mais agressivo para rate limit
+						const rateLimitCooldown = 15000; // 15 segundos
+						if (attempt < maxRetries - 1) {
+							await new Promise((r) => setTimeout(r, rateLimitCooldown));
+							continue;
+						}
+					}
+
 					// Se ainda tem outra key, tenta próxima imediatamente
 					if (keyIndex < keys.length - 1) {
 						if (onQuotaError) {
@@ -649,9 +793,33 @@ export async function POST(request: Request) {
 					}
 				};
 
+				// ===== KEEP-ALIVE CONTROL =====
+				let lastKeepAlive = Date.now();
+
 				// Process each chunk
 				for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
 					const group = groups[chunkIndex];
+
+					// ===== ENVIA KEEP-ALIVE SE NECESSÁRIO =====
+					const now = Date.now();
+					if (now - lastKeepAlive >= KEEP_ALIVE_INTERVAL_MS) {
+						const keepAliveMsg: TranslationProgress = {
+							type: 'keep_alive',
+							translated: translatedSegments.length,
+							total: totalSegments,
+							percentage: Math.round(
+								(translatedSegments.length / totalSegments) * 100,
+							),
+							currentChunk: chunkIndex + 1,
+							totalChunks,
+							message: '🔄 Keep-alive ping to prevent server timeout...',
+							keepAliveUrl: KEEP_ALIVE_URL,
+						};
+						controller.enqueue(
+							encoder.encode(`data: ${JSON.stringify(keepAliveMsg)}\n\n`),
+						);
+						lastKeepAlive = now;
+					}
 
 					try {
 						const translatedChunks = await processSegmentGroup(
@@ -678,6 +846,12 @@ export async function POST(request: Request) {
 						controller.enqueue(
 							encoder.encode(`data: ${JSON.stringify(progress)}\n\n`),
 						);
+
+						// ===== DELAY ENTRE CHUNKS PARA EVITAR RATE LIMIT =====
+						// Dá uma folga extra ao rate limiter entre chunks
+						if (chunkIndex < totalChunks - 1) {
+							await new Promise((resolve) => setTimeout(resolve, 200)); // 200ms
+						}
 					} catch (error: any) {
 						if (error.message === 'QUOTA_ERROR') {
 							// Handle quota error specially

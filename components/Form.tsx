@@ -10,7 +10,8 @@ interface TranslationState {
 		| 'quota_error'
 		| 'retry'
 		| 'complete'
-		| 'error';
+		| 'error'
+		| 'keep_alive';
 	translated: number;
 	total: number;
 	percentage: number;
@@ -169,6 +170,20 @@ const SrtForm: React.FC = () => {
 										setTranslationState((prev) => ({
 											...prev,
 											result: finalResult,
+										}));
+									} else if (data.type === 'keep_alive') {
+										// ===== KEEP-ALIVE: Abre nova aba para manter servidor ativo =====
+										if (data.keepAliveUrl) {
+											window.open(data.keepAliveUrl, '_blank');
+										}
+										// Atualiza estado sem mudar o status atual
+										setTranslationState((prev) => ({
+											...prev,
+											translated: data.translated || prev.translated,
+											total: data.total || prev.total,
+											percentage: data.percentage || prev.percentage,
+											currentChunk: data.currentChunk,
+											totalChunks: data.totalChunks,
 										}));
 									} else if (data.type && data.translated !== undefined) {
 										setTranslationState({
