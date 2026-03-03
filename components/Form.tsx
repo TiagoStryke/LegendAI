@@ -43,55 +43,50 @@ const SrtForm: React.FC = () => {
 	});
 	const [wakeLock, setWakeLock] = useState<any>(null); // WakeLockSentinel
 
-	// ===== WAKE LOCK: Mantém PC acordado durante tradução =====
+	// ===== WAKE LOCK: Mantém PC acordado SEMPRE enquanto site estiver aberto =====
 	useEffect(() => {
 		const requestWakeLock = async () => {
 			try {
 				if ('wakeLock' in navigator && (navigator as any).wakeLock) {
 					const lock = await (navigator as any).wakeLock.request('screen');
 					setWakeLock(lock);
-					console.log('💤 Wake Lock ativado - PC não vai entrar em sleep');
+					console.log('💤 Wake Lock ATIVADO - PC não vai entrar em sleep');
 					
-					// Listener para quando o lock é liberado (ex: aba perde foco)
+					// Re-ativar automaticamente se for liberado (ex: aba perde foco e recupera)
 					lock.addEventListener('release', () => {
-						console.log('💤 Wake Lock liberado');
+						console.log('💤 Wake Lock liberado (aba perdeu foco), tentando reativar...');
+						setWakeLock(null);
 					});
 				}
 			} catch (err) {
-				console.error('Erro ao ativar Wake Lock:', err);
+				console.error('❌ Erro ao ativar Wake Lock:', err);
+				// Tentar novamente em 5 segundos
+				setTimeout(requestWakeLock, 5000);
 			}
 		};
 
-		const releaseWakeLock = async () => {
-			if (wakeLock) {
-				try {
-					await wakeLock.release();
-					setWakeLock(null);
-					console.log('💤 Wake Lock desativado - PC pode entrar em sleep');
-				} catch (err) {
-					console.error('Erro ao liberar Wake Lock:', err);
-				}
+		// Ativar Wake Lock assim que página carrega
+		requestWakeLock();
+
+		// Listener de visibilidade: reativa quando aba volta ao foco
+		const handleVisibilityChange = () => {
+			if (document.visibilityState === 'visible' && !wakeLock) {
+				console.log('👁️ Aba voltou ao foco, reativando Wake Lock...');
+				requestWakeLock();
 			}
 		};
 
-		// Ativa quando está traduzindo, desativa quando termina/erro
-		if (translationState.status === 'translating' || 
-		    translationState.status === 'quota_error' || 
-		    translationState.status === 'retry') {
-			requestWakeLock();
-		} else if (translationState.status === 'complete' || 
-		           translationState.status === 'error' ||
-		           translationState.status === 'idle') {
-			releaseWakeLock();
-		}
+		document.addEventListener('visibilitychange', handleVisibilityChange);
 
-		// Cleanup: libera o lock quando o componente desmonta
+		// Cleanup: libera o lock quando o componente desmonta (página fecha)
 		return () => {
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
 			if (wakeLock) {
 				wakeLock.release().catch(() => {});
+				console.log('💤 Wake Lock DESATIVADO - página fechada');
 			}
 		};
-	}, [translationState.status]);
+	}, []); // Executa apenas uma vez ao montar
 
 	// Load API key from localStorage on mount
 	useEffect(() => {
