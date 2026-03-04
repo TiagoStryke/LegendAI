@@ -1,7 +1,27 @@
 'use client';
 
 import React, { FormEvent, useEffect, useState } from 'react';
-import DebugConsole from './DebugConsole';
+
+interface FileTranslationState {
+	id: string;
+	file: File;
+	status:
+		| 'pending'
+		| 'translating'
+		| 'quota_error'
+		| 'retry'
+		| 'complete'
+		| 'error'
+		| 'keep_alive';
+	translated: number;
+	total: number;
+	percentage: number;
+	currentChunk?: number;
+	totalChunks?: number;
+	message: string;
+	retryAfter?: number;
+	result?: string;
+}
 
 interface TranslationState {
 	status:
@@ -29,18 +49,13 @@ function classNames(...classes: any[]) {
 const LANGUAGES = ['Brazilian Portuguese'];
 
 const SrtForm: React.FC = () => {
-	const [file, setFile] = useState<File | null>(null);
+	const [files, setFiles] = useState<FileTranslationState[]>([]);
 	const [language, setLanguage] = useState<string>('Brazilian Portuguese');
 	const [apiKey, setApiKey] = useState<string>('');
 	const [showApiKey, setShowApiKey] = useState<boolean>(false);
 	const [dragging, setDragging] = useState<boolean>(false);
-	const [translationState, setTranslationState] = useState<TranslationState>({
-		status: 'idle',
-		translated: 0,
-		total: 0,
-		percentage: 0,
-		message: 'Ready to translate',
-	});
+	const [isProcessing, setIsProcessing] = useState<boolean>(false);
+	const [currentFileIndex, setCurrentFileIndex] = useState<number>(-1);
 	const [wakeLock, setWakeLock] = useState<any>(null); // WakeLockSentinel
 
 	// ===== WAKE LOCK: Mantém PC acordado SEMPRE enquanto site estiver aberto =====
@@ -51,10 +66,12 @@ const SrtForm: React.FC = () => {
 					const lock = await (navigator as any).wakeLock.request('screen');
 					setWakeLock(lock);
 					console.log('💤 Wake Lock ATIVADO - PC não vai entrar em sleep');
-					
+
 					// Re-ativar automaticamente se for liberado (ex: aba perde foco e recupera)
 					lock.addEventListener('release', () => {
-						console.log('💤 Wake Lock liberado (aba perdeu foco), tentando reativar...');
+						console.log(
+							'💤 Wake Lock liberado (aba perdeu foco), tentando reativar...',
+						);
 						setWakeLock(null);
 					});
 				}
@@ -111,45 +128,97 @@ const SrtForm: React.FC = () => {
 		return new Promise((resolve, reject) => {
 			const reader = new FileReader();
 			reader.onload = (e) => {
-				const content = e.target?.result as string;
-				resolve(content);
+				if (e.target?.result) {
+					resolve(e.target.result as string);
+				} else {
+					reject(new Error('Failed to read file'));
+				}
 			};
-			reader.onerror = () => {
-				reject(new Error('Failed to read file'));
-			};
+			reader.onerror = reject;
 			reader.readAsText(file);
 		});
 	};
 
-	const resetTranslation = () => {
-		setFile(null); // Clear the selected file
-		setTranslationState({
-			status: 'idle',
-			translated: 0,
-			total: 0,
-			percentage: 0,
-			message: 'Ready to translate',
-		});
+	const handleFileSelect = (selectedFiles: FileList | null) => {
+		if (!selectedFiles || selectedFiles.length === 0) return;
+
+		const newFiles: FileTranslationState[] = [];
+
+		for (let i = 0; i < selectedFiles.length; i++) {
+			const file = selectedFiles[i];
+			const fileExtension = file.name.split('.').pop()?.toLowerCase();
+
+			if (fileExtension === 'srt') {
+				// Verificar se arquivo já foi adicionado
+				const alreadyExists = files.some(
+					(f) => f.file.name === file.name && f.file.size === file.size,
+				);
+
+				if (!alreadyExists) {
+					newFiles.push({
+						id: `${Date.now()}-${i}`,
+						file,
+						status: 'pending',
+						translated: 0,
+						total: 0,
+						percentage: 0,
+						message: 'Waiting to translate...',
+					});
+				}
+			} else {
+				alert(`Skipped ${file.name}: Only .srt files are supported`);
+			}
+		}
+
+		if (newFiles.length > 0) {
+			setFiles((prev) => [...prev, ...newFiles]);
+		}
 	};
 
-	const handleSubmit = async (e: FormEvent) => {
-		e.preventDefault();
+	const updateFileState = (
+		fileId: string,
+		updates: Partial<FileTranslationState>,
+	) => {
+		setFiles((prev) =>
+			prev.map((f) => (f.id === fileId ? { ...f, ...updates } : f)),
+		);
+	};
 
-		if (!file || !apiKey.trim()) {
-			alert('Please select a file and enter your API key');
+	const processNextFile = async () => {
+		// Encontrar próximo arquivo pendente
+		const nextFileIndex = files.findIndex((f) => f.status === 'pending');
+
+		if (nextFileIndex === -1) {
+			// Não há mais arquivos pendentes
+			setIsProcessing(false);
+			setCurrentFileIndex(-1);
 			return;
 		}
 
-		if (translationState.status !== 'idle') {
-			return; // Not in idle state, don't start new translation
+		setCurrentFileIndex(nextFileIndex);
+		const fileState = files[nextFileIndex];
+
+		await translateFile(fileState);
+
+		// Processar próximo arquivo
+		setTimeout(() => processNextFile(), 1000);
+	};
+
+	const translateFile = async (fileState: FileTranslationState) => {
+		if (!apiKey.trim()) {
+			updateFileState(fileState.id, {
+				status: 'error',
+				message: 'API key is required',
+			});
+			return;
 		}
 
 		try {
 			// Read file content
-			const content = await readFileContents(file);
+			const content = await readFileContents(fileState.file);
 
-			// Reset translation state
-			setTranslationState({
+			// Update to translating state
+			updateFileState(fileState.id, {
 				status: 'translating',
 				translated: 0,
 				total: 0,
@@ -167,7 +236,7 @@ const SrtForm: React.FC = () => {
 					content,
 					language,
 					apiKey,
-					filename: file.name, // Adicionar o nome do arquivo
+					filename: fileState.file.name,
 				}),
 			});
 
@@ -183,145 +252,116 @@ const SrtForm: React.FC = () => {
 			}
 
 			let finalResult = '';
-			let buffer = ''; // Buffer to accumulate incomplete lines
+			let buffer = '';
 
 			while (true) {
 				const { done, value } = await reader.read();
 
 				if (done) break;
 
-				// Decode the chunk and add to buffer
 				buffer += decoder.decode(value, { stream: true });
-
-				// Split by double newline to get complete SSE messages
 				const messages = buffer.split('\n\n');
-
-				// Keep the last incomplete message in buffer
 				buffer = messages.pop() || '';
 
-				// Process complete messages
 				for (const message of messages) {
-					const lines = message.split('\n');
-					for (const line of lines) {
-						if (line.startsWith('data: ')) {
-							try {
-								const jsonStr = line.slice(6).trim();
-								if (jsonStr) {
-									// Only parse non-empty JSON
-									const data = JSON.parse(jsonStr);
+					if (message.startsWith('data: ')) {
+						const dataStr = message.slice(6);
 
-									if (data.type === 'result') {
-										finalResult = data.content;
-										// Update the translation state with the final result
-										setTranslationState((prev) => ({
-											...prev,
-											result: finalResult,
-										}));
-									} else if (data.type === 'keep_alive') {
-										// ===== KEEP-ALIVE: Faz requisição silenciosa para manter servidor ativo =====
-										if (data.keepAliveUrl) {
-											// Requisição silenciosa em background (não abre aba)
-											fetch(data.keepAliveUrl, {
-												method: 'HEAD', // HEAD é mais leve que GET
-												mode: 'no-cors', // Evita problemas de CORS
-											}).catch(() => {
-												// Ignora erros - o importante é fazer a requisição
-											});
-
-											console.log(
-												'🔄 Keep-alive ping sent to:',
-												data.keepAliveUrl,
-											);
-										}
-										// Atualiza estado sem mudar o status atual
-										setTranslationState((prev) => ({
-											...prev,
-											translated: data.translated || prev.translated,
-											total: data.total || prev.total,
-											percentage: data.percentage || prev.percentage,
-											currentChunk: data.currentChunk,
-											totalChunks: data.totalChunks,
-										}));
-									} else if (data.type && data.translated !== undefined) {
-										setTranslationState({
-											status: data.type,
-											translated: data.translated || 0,
-											total: data.total || 0,
-											percentage: data.percentage || 0,
-											currentChunk: data.currentChunk,
-											totalChunks: data.totalChunks,
-											message: data.message || '',
-											retryAfter: data.retryAfter,
-										});
-									}
-								}
-							} catch (parseError) {
-								// Silently skip malformed SSE data
-							}
-						}
-					}
-				}
-			}
-
-			// Process any remaining data in buffer
-			if (buffer.trim()) {
-				const lines = buffer.split('\n');
-				for (const line of lines) {
-					if (line.startsWith('data: ')) {
 						try {
-							const jsonStr = line.slice(6).trim();
-							if (jsonStr) {
-								const data = JSON.parse(jsonStr);
-								if (data.type === 'result') {
-									finalResult = data.content;
-									setTranslationState((prev) => ({
-										...prev,
-										result: finalResult,
-									}));
-								}
+							const data = JSON.parse(dataStr);
+
+							if (data.type === 'progress') {
+								updateFileState(fileState.id, {
+									status: 'translating',
+									translated: data.translated,
+									total: data.total,
+									percentage: data.percentage,
+									currentChunk: data.currentChunk,
+									totalChunks: data.totalChunks,
+									message: data.message,
+								});
+							} else if (data.type === 'complete') {
+								finalResult = data.result;
+								updateFileState(fileState.id, {
+									status: 'complete',
+									translated: data.total,
+									total: data.total,
+									percentage: 100,
+									message: 'Translation complete!',
+									result: data.result,
+								});
+							} else if (data.type === 'quota_error') {
+								updateFileState(fileState.id, {
+									status: 'quota_error',
+									message: data.message,
+									retryAfter: data.retryAfter,
+								});
+							} else if (data.type === 'retry') {
+								updateFileState(fileState.id, {
+									status: 'retry',
+									message: data.message,
+									retryAfter: data.retryAfter,
+								});
+							} else if (data.type === 'error') {
+								updateFileState(fileState.id, {
+									status: 'error',
+									message: data.message || 'Translation failed',
+								});
+							} else if (data.type === 'keep_alive') {
+								// Keep-alive ping, just log
+								console.log('⏰ Keep-alive:', data.message);
 							}
 						} catch (parseError) {
-							// Silently skip malformed final SSE data
+							console.error('Failed to parse SSE data:', dataStr);
 						}
 					}
 				}
 			}
-
-			// If we have a final result, store it
-			if (finalResult) {
-				setTranslationState((prev) => ({
-					...prev,
-					result: finalResult,
-				}));
-			}
 		} catch (error) {
-			setTranslationState({
+			console.error('Translation error:', error);
+			updateFileState(fileState.id, {
 				status: 'error',
-				translated: 0,
-				total: 0,
-				percentage: 0,
 				message: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
 			});
 		}
 	};
 
-	const handleDownload = () => {
-		if (!translationState.result || translationState.status !== 'complete') {
-			alert(
-				'Translation result not available. Please wait for translation to complete.',
-			);
+	const handleSubmit = async (e: FormEvent) => {
+		e.preventDefault();
+
+		if (files.length === 0) {
+			alert('Please select at least one file');
 			return;
 		}
 
-		const blob = new Blob([translationState.result], {
+		if (!apiKey.trim()) {
+			alert('Please enter your API key');
+			return;
+		}
+
+		if (isProcessing) {
+			return; // Already processing
+		}
+
+		setIsProcessing(true);
+		processNextFile();
+	};
+
+	const handleDownload = (fileId: string) => {
+		const fileState = files.find((f) => f.id === fileId);
+
+		if (!fileState || !fileState.result || fileState.status !== 'complete') {
+			alert('Translation result not available for this file.');
+			return;
+		}
+
+		const blob = new Blob([fileState.result], {
 			type: 'text/plain;charset=utf-8',
 		});
 		const url = URL.createObjectURL(blob);
 		const link = document.createElement('a');
 		link.href = url;
-		link.download = file
-			? file.name.replace('.srt', '.pt.srt')
-			: 'translated.pt.srt';
+		link.download = fileState.file.name.replace('.srt', '.pt.srt');
 
 		document.body.appendChild(link);
 		link.click();
@@ -329,41 +369,51 @@ const SrtForm: React.FC = () => {
 		URL.revokeObjectURL(url);
 	};
 
+	const handleRemoveFile = (fileId: string) => {
+		if (isProcessing) {
+			const fileState = files.find((f) => f.id === fileId);
+			if (fileState && fileState.status === 'translating') {
+				alert('Cannot remove file that is currently being translated');
+				return;
+			}
+		}
+
+		setFiles((prev) => prev.filter((f) => f.id !== fileId));
+	};
+
+	const handleClearCompleted = () => {
+		setFiles((prev) => prev.filter((f) => f.status !== 'complete'));
+	};
+
+	const handleClearAll = () => {
+		if (isProcessing) {
+			if (
+				!confirm(
+					'Translation is in progress. Are you sure you want to clear all files?',
+				)
+			) {
+				return;
+			}
+			setIsProcessing(false);
+			setCurrentFileIndex(-1);
+		}
+		setFiles([]);
+	};
+
 	const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
 		e.preventDefault();
 		setDragging(false);
 
 		if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-			const droppedFile = e.dataTransfer.files[0];
-			const fileName = droppedFile.name;
-			const fileExtension = fileName.split('.').pop()?.toLowerCase();
-
-			if (fileExtension === 'srt') {
-				setFile(droppedFile);
-			} else {
-				alert('Please select only .srt files');
-			}
+			handleFileSelect(e.dataTransfer.files);
 		}
 	};
 
 	const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
 		if (e.target.files && e.target.files.length > 0) {
-			const selectedFile = e.target.files[0];
-			const fileName = selectedFile.name;
-			const fileExtension = fileName.split('.').pop()?.toLowerCase();
-
-			if (fileExtension === 'srt') {
-				setFile(selectedFile);
-			} else {
-				alert('Please select only .srt files');
-			}
+			handleFileSelect(e.target.files);
 		}
 	};
-
-	const canDownload =
-		translationState.status === 'complete' &&
-		translationState.percentage === 100 &&
-		!!translationState.result;
 
 	return (
 		<div className="flex flex-col px-4 mt-6 w-full md:px-0">
@@ -374,7 +424,10 @@ const SrtForm: React.FC = () => {
 						htmlFor="srt-file"
 						className="block font-bold py-4 md:pl-8 text-lg text-[#444444] dark:text-gray-200"
 					>
-						{file ? '✅' : '👉'} Step 1: Choose your SRT subtitle file
+						{files.length > 0 ? '✅' : '👉'} Step 1: Select SRT Files
+						<span className="block text-xs text-gray-500 dark:text-gray-400 font-normal mt-1">
+							You can select multiple files at once
+						</span>
 					</label>
 					<div
 						id="srt-file"
@@ -393,11 +446,12 @@ const SrtForm: React.FC = () => {
 						<div className="flex flex-col items-center justify-center py-12">
 							<div className="text-6xl mb-4">📁</div>
 							<p className="text-lg text-gray-600 dark:text-gray-300 mb-4">
-								Drag and drop your .srt file here or click to select
+								Drag and drop your .srt files here or click to select
 							</p>
 							<input
 								type="file"
 								accept=".srt"
+								multiple
 								onChange={handleFileChange}
 								className="hidden"
 								id="file-input"
@@ -406,17 +460,137 @@ const SrtForm: React.FC = () => {
 								htmlFor="file-input"
 								className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded cursor-pointer transition-colors"
 							>
-								Select File
+								Select Files
 							</label>
-							{file && (
-								<div className="mt-4 text-center">
-									<p className="text-green-600 dark:text-green-400 font-semibold">
-										✅ {file.name}
-									</p>
-								</div>
-							)}
 						</div>
 					</div>
+
+					{/* Files List */}
+					{files.length > 0 && (
+						<div className="mt-6 md:px-8">
+							<div className="flex justify-between items-center mb-4">
+								<h3 className="font-semibold text-gray-700 dark:text-gray-300 text-lg">
+									Files ({files.length})
+								</h3>
+								<div className="space-x-3">
+									<button
+										type="button"
+										onClick={handleClearCompleted}
+										className="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors"
+									>
+										Clear Completed
+									</button>
+									<button
+										type="button"
+										onClick={handleClearAll}
+										className="text-sm text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-200 transition-colors"
+									>
+										Clear All
+									</button>
+								</div>
+							</div>
+
+							<div className="space-y-3">
+								{files.map((fileState) => (
+									<div
+										key={fileState.id}
+										className={`p-4 rounded-lg border-2 transition-all ${
+											fileState.status === 'complete'
+												? 'border-green-400 bg-green-50 dark:bg-green-900/20'
+												: fileState.status === 'translating'
+													? 'border-blue-400 bg-blue-50 dark:bg-blue-900/20'
+													: fileState.status === 'error'
+														? 'border-red-400 bg-red-50 dark:bg-red-900/20'
+														: 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800'
+										}`}
+									>
+										<div className="flex items-start justify-between gap-4">
+											<div className="flex-1 min-w-0">
+												<div className="flex items-center gap-3 mb-2">
+													{/* Status Icon */}
+													{fileState.status === 'complete' && (
+														<span className="text-2xl flex-shrink-0">✅</span>
+													)}
+													{fileState.status === 'translating' && (
+														<span className="text-2xl flex-shrink-0 animate-spin">
+															🔄
+														</span>
+													)}
+													{fileState.status === 'error' && (
+														<span className="text-2xl flex-shrink-0">❌</span>
+													)}
+													{fileState.status === 'pending' && (
+														<span className="text-2xl flex-shrink-0">⏳</span>
+													)}
+													{(fileState.status === 'quota_error' ||
+														fileState.status === 'retry') && (
+														<span className="text-2xl flex-shrink-0">⏰</span>
+													)}
+
+													{/* Filename */}
+													<div className="flex-1 min-w-0">
+														<p className="font-medium text-gray-900 dark:text-gray-100 truncate">
+															{fileState.file.name}
+														</p>
+														{fileState.message && (
+															<p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+																{fileState.message}
+															</p>
+														)}
+													</div>
+												</div>
+
+												{/* Progress Bar */}
+												{fileState.status === 'translating' && (
+													<div className="mt-2">
+														<div className="flex justify-between text-xs text-gray-600 dark:text-gray-400 mb-1">
+															<span>
+																{fileState.currentChunk && fileState.totalChunks
+																	? `${fileState.currentChunk}/${fileState.totalChunks} chunks`
+																	: 'Processing...'}
+															</span>
+															<span>{fileState.percentage}%</span>
+														</div>
+														<div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
+															<div
+																className="bg-blue-500 h-2.5 rounded-full transition-all duration-300"
+																style={{
+																	width: `${fileState.percentage}%`,
+																}}
+															/>
+														</div>
+													</div>
+												)}
+											</div>
+
+											{/* Action Buttons */}
+											<div className="flex items-center gap-2 flex-shrink-0">
+												{fileState.status === 'complete' && (
+													<button
+														type="button"
+														onClick={() => handleDownload(fileState.id)}
+														className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded font-medium transition-colors whitespace-nowrap"
+													>
+														⬇️ Download
+													</button>
+												)}
+												{fileState.status !== 'translating' && (
+													<button
+														type="button"
+														onClick={() => handleRemoveFile(fileState.id)}
+														className="px-3 py-2 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/20 rounded transition-colors"
+														title="Remove file"
+													>
+														🗑️
+													</button>
+												)}
+											</div>
+										</div>
+									</div>
+								))}
+							</div>
+						</div>
+					)}
 				</div>
 
 				{/* Step 2: API Key */}
@@ -537,79 +711,32 @@ const SrtForm: React.FC = () => {
 				<div className="md:px-8">
 					<button
 						type="submit"
-						disabled={
-							!file || !apiKey.trim() || translationState.status !== 'idle'
-						}
+						disabled={files.length === 0 || !apiKey.trim() || isProcessing}
 						className={classNames(
 							'w-full py-4 px-6 rounded-lg font-semibold text-lg transition-all duration-200',
-							!file || !apiKey.trim() || translationState.status !== 'idle'
+							files.length === 0 || !apiKey.trim() || isProcessing
 								? 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed'
 								: 'bg-blue-500 hover:bg-blue-600 text-white shadow-lg hover:shadow-xl transform hover:-translate-y-0.5',
 						)}
 					>
-						{translationState.status === 'translating'
-							? '🔄 Translating...'
-							: translationState.status === 'quota_error'
-								? '⏰ Quota Exceeded - Retrying...'
-								: translationState.status === 'retry'
-									? '🔄 Retrying...'
-									: translationState.status === 'error'
-										? '❌ Error Occurred'
-										: translationState.status === 'complete'
-											? '✅ Translation Complete'
-											: '🚀 Start Translation'}
+						{isProcessing
+							? '🔄 Processing Files...'
+							: files.length === 0
+								? '📁 Select Files to Translate'
+								: `🚀 Translate ${files.length} File${files.length > 1 ? 's' : ''}`}
 					</button>
 				</div>
 			</form>
 
-			{/* Debug Console - Show when translation starts */}
-			{translationState.status !== 'idle' && (
-				<div className="mt-8">
-					<DebugConsole
-						translated={translationState.translated}
-						total={translationState.total}
-						percentage={translationState.percentage}
-						currentChunk={translationState.currentChunk}
-						totalChunks={translationState.totalChunks}
-						message={translationState.message}
-						status={translationState.status}
-						retryAfter={translationState.retryAfter}
-					/>
-					
-					{/* Wake Lock Indicator */}
-					{wakeLock && !wakeLock.released && (
-						<div className="mt-2 px-4 py-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-							<div className="flex items-center gap-2 text-sm text-blue-700 dark:text-blue-300">
-								<span className="text-lg">💤</span>
-								<span className="font-medium">Wake Lock ativo - seu computador não entrará em modo sleep</span>
-							</div>
-						</div>
-					)}
-				</div>
-			)}
-
-			{/* Download Button - Only show when 100% complete */}
-			{canDownload && (
-				<div className="mt-6 md:px-8">
-					<button
-						onClick={handleDownload}
-						className="w-full py-4 px-6 rounded-lg font-semibold text-lg bg-green-500 hover:bg-green-600 text-white shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all duration-200"
-					>
-						⬇️ Download Translated File
-					</button>
-				</div>
-			)}
-
-			{/* Reset Button - Show when translation is complete or has error */}
-			{(translationState.status === 'complete' ||
-				translationState.status === 'error') && (
-				<div className="mt-4 md:px-8">
-					<button
-						onClick={resetTranslation}
-						className="w-full py-3 px-6 rounded-lg font-medium text-base bg-gray-500 hover:bg-gray-600 text-white shadow-md hover:shadow-lg transition-all duration-200"
-					>
-						🔄 Start New Translation
-					</button>
+			{/* Wake Lock Indicator - Show when active */}
+			{wakeLock && !wakeLock.released && (
+				<div className="mt-6 px-4 py-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+					<div className="flex items-center gap-2 text-sm text-blue-700 dark:text-blue-300">
+						<span className="text-lg">💤</span>
+						<span className="font-medium">
+							Wake Lock active - your computer will not enter sleep mode
+						</span>
+					</div>
 				</div>
 			)}
 		</div>
