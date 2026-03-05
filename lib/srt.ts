@@ -4,7 +4,6 @@ import {
     type ReconnectInterval,
     createParser,
 } from 'eventsource-parser';
-import { encoding_for_model } from 'tiktoken';
 
 /**
  * Parsed subtitle entry with timing information
@@ -136,11 +135,15 @@ export function sampleValidation(
 
 /**
  * Groups segments into groups of length `length` or less.
+ * Note: Uses tiktoken which may have issues in browser environments
  */
-export function groupSegmentsByTokenLength(
+export async function groupSegmentsByTokenLength(
 	segments: Segment[],
 	length: number,
 ) {
+	// Lazy import tiktoken to avoid bundling issues
+	const { encoding_for_model } = await import('tiktoken');
+	
 	const groups: Segment[][] = [];
 	let currentGroup: Segment[] = [];
 	let currentGroupTokenCount = 0;

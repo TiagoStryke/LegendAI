@@ -593,7 +593,7 @@ export async function POST(request: Request) {
 				console.log(`Filename: ${filename}, Context: ${fileContext}`); // Debug log
 
 				// Group segments into batches for efficient processing
-				const groups = groupSegmentsByTokenLength(
+				const groups = await groupSegmentsByTokenLength(
 					segments,
 					MAX_TOKENS_IN_SEGMENT,
 				);
