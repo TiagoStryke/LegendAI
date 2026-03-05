@@ -39,23 +39,24 @@ Quando o app monitora a pasta de downloads, pode detectar arquivos `.mkv` **aind
 ```typescript
 // Sonarr/Radarr tem webhook quando download completa
 app.post('/api/sonarr/webhook', async (req, res) => {
-  const { eventType, series, episodes, episodeFile } = req.body;
-  
-  if (eventType === 'Download') {
-    // Arquivo 100% completo e movido para pasta final
-    const videoPath = episodeFile.path;
-    
-    console.log('📥 Sonarr: Download completo', videoPath);
-    
-    // Processar automaticamente
-    await fileProcessor.processVideo(videoPath);
-  }
-  
-  res.json({ success: true });
+	const { eventType, series, episodes, episodeFile } = req.body;
+
+	if (eventType === 'Download') {
+		// Arquivo 100% completo e movido para pasta final
+		const videoPath = episodeFile.path;
+
+		console.log('📥 Sonarr: Download completo', videoPath);
+
+		// Processar automaticamente
+		await fileProcessor.processVideo(videoPath);
+	}
+
+	res.json({ success: true });
 });
 ```
 
 **Vantagens:**
+
 - ✅ Arquivos sempre 100% completos (Sonarr move após verificar)
 - ✅ Organização automática de pastas
 - ✅ Renomeação padronizada
@@ -63,6 +64,7 @@ app.post('/api/sonarr/webhook', async (req, res) => {
 - ✅ Sem falsos positivos
 
 **Setup:**
+
 1. Configurar Sonarr/Radarr
 2. Ativar webhook em Settings → Connect
 3. URL: `http://localhost:3030/api/sonarr/webhook`
@@ -77,53 +79,55 @@ app.post('/api/sonarr/webhook', async (req, res) => {
 ```typescript
 // src/main/services/QBittorrentWatcher.ts
 export class QBittorrentWatcher {
-  private qbitClient: QBittorrentClient;
-  private knownCompleted = new Set<string>();
-  
-  async start() {
-    // Polling a cada 10 segundos
-    setInterval(async () => {
-      const torrents = await this.qbitClient.getTorrents('completed');
-      
-      for (const torrent of torrents) {
-        // Já processado?
-        if (this.knownCompleted.has(torrent.hash)) continue;
-        
-        // Completou recentemente? (últimos 5 min)
-        const completionTime = torrent.completion_on * 1000;
-        const isRecent = (Date.now() - completionTime) < 300000;
-        
-        if (!isRecent) continue;
-        
-        // Marcar como conhecido
-        this.knownCompleted.add(torrent.hash);
-        
-        console.log('✅ qBittorrent: Torrent completo', torrent.name);
-        
-        // Buscar arquivos .mkv no diretório
-        const videoFiles = await this.findVideoFiles(torrent.content_path);
-        
-        // Processar cada arquivo
-        for (const videoFile of videoFiles) {
-          await fileProcessor.processVideo(videoFile);
-        }
-      }
-    }, 10000);
-  }
-  
-  async findVideoFiles(path: string): Promise<string[]> {
-    // Implementação recursiva para encontrar .mkv/.mp4/.avi
-    // ... (código no ADVANCED-INTEGRATIONS.md linha 520)
-  }
+	private qbitClient: QBittorrentClient;
+	private knownCompleted = new Set<string>();
+
+	async start() {
+		// Polling a cada 10 segundos
+		setInterval(async () => {
+			const torrents = await this.qbitClient.getTorrents('completed');
+
+			for (const torrent of torrents) {
+				// Já processado?
+				if (this.knownCompleted.has(torrent.hash)) continue;
+
+				// Completou recentemente? (últimos 5 min)
+				const completionTime = torrent.completion_on * 1000;
+				const isRecent = Date.now() - completionTime < 300000;
+
+				if (!isRecent) continue;
+
+				// Marcar como conhecido
+				this.knownCompleted.add(torrent.hash);
+
+				console.log('✅ qBittorrent: Torrent completo', torrent.name);
+
+				// Buscar arquivos .mkv no diretório
+				const videoFiles = await this.findVideoFiles(torrent.content_path);
+
+				// Processar cada arquivo
+				for (const videoFile of videoFiles) {
+					await fileProcessor.processVideo(videoFile);
+				}
+			}
+		}, 10000);
+	}
+
+	async findVideoFiles(path: string): Promise<string[]> {
+		// Implementação recursiva para encontrar .mkv/.mp4/.avi
+		// ... (código no ADVANCED-INTEGRATIONS.md linha 520)
+	}
 }
 ```
 
 **Vantagens:**
+
 - ✅ Sem Sonarr/Radarr necessário
 - ✅ Arquivos garantidamente completos (qBit verifica hash)
 - ✅ API nativa do qBittorrent
 
 **Desvantagens:**
+
 - ⚠️ Sem organização automática de pastas
 - ⚠️ Sem renomeação padronizada
 - ⚠️ Precisa buscar recursivamente por vídeos
@@ -139,28 +143,30 @@ export class QBittorrentWatcher {
 import chokidar from 'chokidar';
 
 const watcher = chokidar.watch('D:/Downloads/Torrents/**/*.mkv', {
-  persistent: true,
-  ignoreInitial: false,
-  awaitWriteFinish: {
-    stabilityThreshold: 10000,  // 10 segundos sem modificação
-    pollInterval: 2000           // Verifica a cada 2 segundos
-  }
+	persistent: true,
+	ignoreInitial: false,
+	awaitWriteFinish: {
+		stabilityThreshold: 10000, // 10 segundos sem modificação
+		pollInterval: 2000, // Verifica a cada 2 segundos
+	},
 });
 
 watcher.on('add', async (filePath) => {
-  console.log(`📁 Novo arquivo detectado (estável): ${filePath}`);
-  
-  // Arquivo já está completo (10s sem modificação)
-  await fileProcessor.processVideo(filePath);
+	console.log(`📁 Novo arquivo detectado (estável): ${filePath}`);
+
+	// Arquivo já está completo (10s sem modificação)
+	await fileProcessor.processVideo(filePath);
 });
 ```
 
 **Vantagens:**
+
 - ✅ Sem dependências externas (qBit, Sonarr)
 - ✅ Simples de implementar
 - ✅ Funciona com qualquer fonte de download
 
 **Desvantagens:**
+
 - ⚠️ Delay de 10-30 segundos após download
 - ⚠️ Não 100% confiável (arquivo pode ainda estar sendo escrito)
 - ⚠️ Problemas com arquivos grandes (>10 GB)
@@ -176,40 +182,40 @@ watcher.on('add', async (filePath) => {
 import fs from 'fs';
 
 export async function isFileComplete(filePath: string): Promise<boolean> {
-  try {
-    // Tentar abrir com lock exclusivo
-    const fd = fs.openSync(filePath, 'r+');
-    fs.closeSync(fd);
-    
-    // Se conseguiu abrir, arquivo não está sendo escrito
-    return true;
-  } catch (error) {
-    if (error.code === 'EBUSY' || error.code === 'EPERM') {
-      // Arquivo ainda em uso (sendo escrito)
-      return false;
-    }
-    throw error;
-  }
+	try {
+		// Tentar abrir com lock exclusivo
+		const fd = fs.openSync(filePath, 'r+');
+		fs.closeSync(fd);
+
+		// Se conseguiu abrir, arquivo não está sendo escrito
+		return true;
+	} catch (error) {
+		if (error.code === 'EBUSY' || error.code === 'EPERM') {
+			// Arquivo ainda em uso (sendo escrito)
+			return false;
+		}
+		throw error;
+	}
 }
 
 export async function waitForFileComplete(
-  filePath: string, 
-  maxWaitMinutes: number = 60
+	filePath: string,
+	maxWaitMinutes: number = 60,
 ): Promise<boolean> {
-  const maxAttempts = maxWaitMinutes * 12; // Tenta a cada 5s
-  
-  for (let i = 0; i < maxAttempts; i++) {
-    if (await isFileComplete(filePath)) {
-      console.log(`✅ Arquivo completo: ${filePath}`);
-      return true;
-    }
-    
-    // Aguardar 5 segundos
-    await new Promise(resolve => setTimeout(resolve, 5000));
-  }
-  
-  console.warn(`⚠️ Timeout aguardando arquivo: ${filePath}`);
-  return false;
+	const maxAttempts = maxWaitMinutes * 12; // Tenta a cada 5s
+
+	for (let i = 0; i < maxAttempts; i++) {
+		if (await isFileComplete(filePath)) {
+			console.log(`✅ Arquivo completo: ${filePath}`);
+			return true;
+		}
+
+		// Aguardar 5 segundos
+		await new Promise((resolve) => setTimeout(resolve, 5000));
+	}
+
+	console.warn(`⚠️ Timeout aguardando arquivo: ${filePath}`);
+	return false;
 }
 ```
 
@@ -217,25 +223,27 @@ export async function waitForFileComplete(
 
 ```typescript
 watcher.on('add', async (filePath) => {
-  console.log(`📁 Novo arquivo: ${filePath}`);
-  
-  // Aguardar arquivo estar completo
-  const isComplete = await waitForFileComplete(filePath, 60);
-  
-  if (isComplete) {
-    await fileProcessor.processVideo(filePath);
-  } else {
-    console.error(`❌ Arquivo não completou: ${filePath}`);
-  }
+	console.log(`📁 Novo arquivo: ${filePath}`);
+
+	// Aguardar arquivo estar completo
+	const isComplete = await waitForFileComplete(filePath, 60);
+
+	if (isComplete) {
+		await fileProcessor.processVideo(filePath);
+	} else {
+		console.error(`❌ Arquivo não completou: ${filePath}`);
+	}
 });
 ```
 
 **Vantagens:**
+
 - ✅ Muito confiável (testa lock real)
 - ✅ Funciona com qualquer fonte
 - ✅ Sem delay fixo (assim que libera, processa)
 
 **Desvantagens:**
+
 - ⚠️ Mais complexo
 - ⚠️ Pode ter problemas de permissão no Windows
 
@@ -250,69 +258,70 @@ watcher.on('add', async (filePath) => {
 import fs from 'fs';
 
 interface FileSizeCheck {
-  path: string;
-  size: number;
-  timestamp: number;
+	path: string;
+	size: number;
+	timestamp: number;
 }
 
 const fileSizeCache = new Map<string, FileSizeCheck>();
 
 export async function isFileStable(
-  filePath: string,
-  stabilitySeconds: number = 30
+	filePath: string,
+	stabilitySeconds: number = 30,
 ): Promise<boolean> {
-  const stats = fs.statSync(filePath);
-  const currentSize = stats.size;
-  const now = Date.now();
-  
-  const cached = fileSizeCache.get(filePath);
-  
-  if (!cached) {
-    // Primeira verificação
-    fileSizeCache.set(filePath, {
-      path: filePath,
-      size: currentSize,
-      timestamp: now
-    });
-    return false;
-  }
-  
-  // Tamanho mudou?
-  if (cached.size !== currentSize) {
-    // Atualizar cache
-    fileSizeCache.set(filePath, {
-      path: filePath,
-      size: currentSize,
-      timestamp: now
-    });
-    return false;
-  }
-  
-  // Tamanho igual por X segundos?
-  const secondsUnchanged = (now - cached.timestamp) / 1000;
-  
-  if (secondsUnchanged >= stabilitySeconds) {
-    // Arquivo estável!
-    fileSizeCache.delete(filePath); // Limpar cache
-    return true;
-  }
-  
-  return false;
+	const stats = fs.statSync(filePath);
+	const currentSize = stats.size;
+	const now = Date.now();
+
+	const cached = fileSizeCache.get(filePath);
+
+	if (!cached) {
+		// Primeira verificação
+		fileSizeCache.set(filePath, {
+			path: filePath,
+			size: currentSize,
+			timestamp: now,
+		});
+		return false;
+	}
+
+	// Tamanho mudou?
+	if (cached.size !== currentSize) {
+		// Atualizar cache
+		fileSizeCache.set(filePath, {
+			path: filePath,
+			size: currentSize,
+			timestamp: now,
+		});
+		return false;
+	}
+
+	// Tamanho igual por X segundos?
+	const secondsUnchanged = (now - cached.timestamp) / 1000;
+
+	if (secondsUnchanged >= stabilitySeconds) {
+		// Arquivo estável!
+		fileSizeCache.delete(filePath); // Limpar cache
+		return true;
+	}
+
+	return false;
 }
 
 // Uso:
 setInterval(async () => {
-  for (const file of detectedFiles) {
-    if (await isFileStable(file, 30)) {
-      console.log(`✅ Arquivo estável (30s): ${file}`);
-      await fileProcessor.processVideo(file);
-      detectedFiles.delete(file);
-    }
-  }
+	for (const file of detectedFiles) {
+		if (await isFileStable(file, 30)) {
+			console.log(`✅ Arquivo estável (30s): ${file}`);
+			await fileProcessor.processVideo(file);
+			detectedFiles.delete(file);
+		}
+	}
 }, 5000); // Verifica a cada 5s
 ```
 
 **Vantagens:**
+
 - ✅ Muito confiável (sem lock issues)
 - ✅ Simples de entender
 - ✅ Funciona em qualquer OS
@@ -340,31 +349,31 @@ setInterval(async () => {
 ```typescript
 // src/main/services/FileDetector.ts
 export class FileDetector {
-  async isFileSafeToProcess(filePath: string): Promise<boolean> {
-    // 1. Verificar se veio do qBittorrent (se integração ativa)
-    if (this.qbitIntegration) {
-      const torrent = await this.qbitClient.findTorrentByFile(filePath);
-      if (torrent) {
-        return torrent.state === 'complete'; // qBit garante hash OK
-      }
-    }
-    
-    // 2. Verificar lock de arquivo
-    if (!await isFileComplete(filePath)) {
-      console.log(`⏳ Arquivo ainda sendo escrito: ${filePath}`);
-      return false;
-    }
-    
-    // 3. Verificar estabilidade de tamanho
-    if (!await isFileStable(filePath, 30)) {
-      console.log(`⏳ Arquivo instável (tamanho mudando): ${filePath}`);
-      return false;
-    }
-    
-    // 4. Todas as verificações passaram
-    console.log(`✅ Arquivo seguro para processar: ${filePath}`);
-    return true;
-  }
+	async isFileSafeToProcess(filePath: string): Promise<boolean> {
+		// 1. Verificar se veio do qBittorrent (se integração ativa)
+		if (this.qbitIntegration) {
+			const torrent = await this.qbitClient.findTorrentByFile(filePath);
+			if (torrent) {
+				return torrent.state === 'complete'; // qBit garante hash OK
+			}
+		}
+
+		// 2. Verificar lock de arquivo
+		if (!(await isFileComplete(filePath))) {
+			console.log(`⏳ Arquivo ainda sendo escrito: ${filePath}`);
+			return false;
+		}
+
+		// 3. Verificar estabilidade de tamanho
+		if (!(await isFileStable(filePath, 30))) {
+			console.log(`⏳ Arquivo instável (tamanho mudando): ${filePath}`);
+			return false;
+		}
+
+		// 4. Todas as verificações passaram
+		console.log(`✅ Arquivo seguro para processar: ${filePath}`);
+		return true;
+	}
 }
 ```
 

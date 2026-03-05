@@ -1,5 +1,17 @@
 'use client';
 
+import {
+	clearTranslationCache,
+	getCacheProgress, initializeCache,
+	saveChunkToCache
+} from '@/lib/cache';
+import {
+	buildSRT,
+	chunkSubtitles,
+	type ParsedSubtitle,
+	parseSRT,
+	sampleValidation,
+} from '@/lib/srt';
 import React, { FormEvent, useEffect, useState } from 'react';
 
 interface FileTranslationState {
@@ -214,115 +226,227 @@ const SrtForm: React.FC = () => {
 		}
 
 		try {
-			// Read file content
+			// Step 1: Read and parse SRT file
 			const content = await readFileContents(fileState.file);
+			const subtitles = parseSRT(content);
 
-			// Update to translating state
-			updateFileState(fileState.id, {
-				status: 'translating',
-				translated: 0,
-				total: 0,
-				percentage: 0,
-				message: 'Starting translation...',
-			});
-
-			// Start Server-Sent Events connection
-			const response = await fetch('/api', {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify({
-					content,
-					language,
-					apiKey,
-					filename: fileState.file.name,
-				}),
-			});
-
-			if (!response.ok) {
-				throw new Error(`HTTP error! status: ${response.status}`);
+			if (subtitles.length === 0) {
+				throw new Error('No subtitles found in file');
 			}
 
-			const reader = response.body?.getReader();
-			const decoder = new TextDecoder();
+			// Step 2: Chunk subtitles into groups of 15
+			const CHUNK_SIZE = 15;
+			const chunks = chunkSubtitles(subtitles, CHUNK_SIZE);
+			const totalChunks = chunks.length;
 
-			if (!reader) {
-				throw new Error('Failed to get response reader');
+			console.log(
+				`📦 Chunked ${subtitles.length} subtitles into ${totalChunks} chunks`,
+			);
+
+			// Step 3: Initialize or get existing cache
+			const cache = initializeCache(
+				fileState.id,
+				fileState.file.name,
+				language,
+				totalChunks,
+				subtitles.length,
+			);
+
+			const cachedProgress = getCacheProgress(fileState.id);
+			if (cachedProgress > 0) {
+				console.log(
+					`💾 Found cached progress: ${cachedProgress}% (${Object.keys(cache.translatedChunks).length}/${totalChunks} chunks)`,
+				);
+				updateFileState(fileState.id, {
+					status: 'translating',
+					message: `Resuming from ${cachedProgress}% (found ${Object.keys(cache.translatedChunks).length} cached chunks)`,
+					percentage: cachedProgress,
+					currentChunk: Object.keys(cache.translatedChunks).length,
+					totalChunks,
+				});
 			}
 
-			let finalResult = '';
-			let buffer = '';
+			// Step 4: Translate missing chunks
+			const translatedSubtitles: ParsedSubtitle[] = new Array(subtitles.length);
 
-			while (true) {
-				const { done, value } = await reader.read();
+			for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+				// Check if chunk is already cached
+				if (cache.translatedChunks[chunkIndex]) {
+					console.log(
+						`✅ Chunk ${chunkIndex + 1}/${totalChunks} - using cache`,
+					);
+					const cachedChunk = cache.translatedChunks[chunkIndex];
+					// Copy cached chunk to result array
+					cachedChunk.forEach((sub) => {
+						translatedSubtitles[sub.index - 1] = sub;
+					});
 
-				if (done) break;
+					// Update progress
+					const progress = Math.round(((chunkIndex + 1) / totalChunks) * 100);
+					updateFileState(fileState.id, {
+						status: 'translating',
+						percentage: progress,
+						currentChunk: chunkIndex + 1,
+						totalChunks,
+						translated: (chunkIndex + 1) * CHUNK_SIZE,
+						total: subtitles.length,
+						message: `Using cached chunk ${chunkIndex + 1}/${totalChunks}`,
+					});
+					continue;
+				}
 
-				buffer += decoder.decode(value, { stream: true });
-				const messages = buffer.split('\n\n');
-				buffer = messages.pop() || '';
+				// Translate this chunk
+				console.log(`🔄 Translating chunk ${chunkIndex + 1}/${totalChunks}...`);
 
-				for (const message of messages) {
-					if (message.startsWith('data: ')) {
-						const dataStr = message.slice(6);
+				updateFileState(fileState.id, {
+					status: 'translating',
+					message: `Translating chunk ${chunkIndex + 1}/${totalChunks}...`,
+					currentChunk: chunkIndex + 1,
+					totalChunks,
+				});
 
-						try {
-							const data = JSON.parse(dataStr);
+				const chunk = chunks[chunkIndex];
+				let retries = 0;
+				const MAX_RETRIES = 5; // More retries for reliability
+				let translatedChunk: ParsedSubtitle[] | null = null;
 
-							if (data.type === 'progress') {
-								updateFileState(fileState.id, {
-									status: 'translating',
-									translated: data.translated,
-									total: data.total,
-									percentage: data.percentage,
-									currentChunk: data.currentChunk,
-									totalChunks: data.totalChunks,
-									message: data.message,
-								});
-							} else if (data.type === 'complete') {
-								finalResult = data.result;
-								updateFileState(fileState.id, {
-									status: 'complete',
-									translated: data.total,
-									total: data.total,
-									percentage: 100,
-									message: 'Translation complete!',
-									result: data.result,
-								});
-							} else if (data.type === 'quota_error') {
+				while (retries < MAX_RETRIES && !translatedChunk) {
+					try {
+						const response = await fetch('/api/translate-chunk', {
+							method: 'POST',
+							headers: {
+								'Content-Type': 'application/json',
+							},
+							body: JSON.stringify({
+								chunk,
+								targetLanguage: language,
+								apiKey, // Can be multiple keys comma-separated
+							}),
+						});
+
+						if (!response.ok) {
+							if (response.status === 429) {
+								const data = await response.json();
+								const retryAfter = data.retryAfter || 60;
+								console.log(
+									`⏰ Rate limited on chunk ${chunkIndex + 1}, waiting ${retryAfter}s...`,
+								);
 								updateFileState(fileState.id, {
 									status: 'quota_error',
-									message: data.message,
-									retryAfter: data.retryAfter,
+									message: `Rate limited. Retrying chunk ${chunkIndex + 1}/${totalChunks} in ${retryAfter}s...`,
+									retryAfter,
 								});
-							} else if (data.type === 'retry') {
-								updateFileState(fileState.id, {
-									status: 'retry',
-									message: data.message,
-									retryAfter: data.retryAfter,
-								});
-							} else if (data.type === 'error') {
-								updateFileState(fileState.id, {
-									status: 'error',
-									message: data.message || 'Translation failed',
-								});
-							} else if (data.type === 'keep_alive') {
-								// Keep-alive ping, just log
-								console.log('⏰ Keep-alive:', data.message);
+								await new Promise((resolve) =>
+									setTimeout(resolve, retryAfter * 1000),
+								);
+								retries++;
+								continue;
 							}
-						} catch (parseError) {
-							console.error('Failed to parse SSE data:', dataStr);
+							throw new Error(`HTTP ${response.status}`);
 						}
+
+						const data = await response.json();
+
+						if (!data.success) {
+							throw new Error(data.error || 'Translation failed');
+						}
+
+						translatedChunk = data.translatedChunk;
+
+						if (!translatedChunk) {
+							throw new Error('Empty translation result');
+						}
+
+						// Save to cache
+						saveChunkToCache(fileState.id, chunkIndex, translatedChunk);
+						console.log(
+							`✅ Chunk ${chunkIndex + 1}/${totalChunks} translated and cached`,
+						);
+
+						// Copy to result array
+						translatedChunk.forEach((sub) => {
+							translatedSubtitles[sub.index - 1] = sub;
+						});
+
+						// Update progress
+						const progress = Math.round(((chunkIndex + 1) / totalChunks) * 100);
+						updateFileState(fileState.id, {
+							status: 'translating',
+							percentage: progress,
+							currentChunk: chunkIndex + 1,
+							totalChunks,
+							translated: (chunkIndex + 1) * CHUNK_SIZE,
+							total: subtitles.length,
+							message: `Translated chunk ${chunkIndex + 1}/${totalChunks}`,
+						});
+
+						// More conservative delay between chunks (1.2s)
+						// This helps avoid hitting rate limits
+						await new Promise((resolve) => setTimeout(resolve, 1200));
+					} catch (error) {
+						retries++;
+						console.error(
+							`❌ Chunk ${chunkIndex + 1} failed (attempt ${retries}/${MAX_RETRIES}):`,
+							error,
+						);
+
+						if (retries >= MAX_RETRIES) {
+							throw new Error(
+								`Failed to translate chunk ${chunkIndex + 1} after ${MAX_RETRIES} attempts`,
+							);
+						}
+
+						// More aggressive exponential backoff
+						// 2s, 5s, 10s, 20s, 30s
+						const backoff = Math.min(2000 * Math.pow(2, retries - 1), 30000);
+						console.log(
+							`⏰ Retrying chunk ${chunkIndex + 1} in ${backoff / 1000}s...`,
+						);
+						updateFileState(fileState.id, {
+							status: 'retry',
+							message: `Retrying chunk ${chunkIndex + 1}/${totalChunks} in ${backoff / 1000}s... (attempt ${retries}/${MAX_RETRIES})`,
+							retryAfter: Math.round(backoff / 1000),
+						});
+						await new Promise((resolve) => setTimeout(resolve, backoff));
 					}
 				}
 			}
+
+			// Step 5: Validate timing integrity
+			console.log('🔍 Validating translation integrity...');
+			const validation = sampleValidation(subtitles, translatedSubtitles);
+
+			if (!validation.valid) {
+				console.error('❌ Validation failed:', validation.errors);
+				throw new Error(`Validation failed: ${validation.errors.join('; ')}`);
+			}
+
+			console.log('✅ Validation passed!');
+
+			// Step 6: Build final SRT
+			const finalSRT = buildSRT(translatedSubtitles);
+
+			updateFileState(fileState.id, {
+				status: 'complete',
+				percentage: 100,
+				currentChunk: totalChunks,
+				totalChunks,
+				translated: subtitles.length,
+				total: subtitles.length,
+				message: '✅ Translation complete and validated!',
+				result: finalSRT,
+			});
+
+			// Clear cache after successful completion
+			clearTranslationCache(fileState.id);
+			console.log('🧹 Cleared cache for completed file');
 		} catch (error) {
-			console.error('Translation error:', error);
+			console.error('❌ Translation error:', error);
 			updateFileState(fileState.id, {
 				status: 'error',
 				message: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
 			});
+			// Keep cache for retry
 		}
 	};
 
@@ -660,6 +784,19 @@ const SrtForm: React.FC = () => {
 								)}
 							</button>
 						</div>
+
+						{/* API Keys Counter */}
+						{apiKey.trim() && apiKey.includes(',') && (
+							<div className="mt-2 flex items-center gap-2 text-sm">
+								<div className="px-3 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full font-medium">
+									🔑 {apiKey.split(',').filter((k) => k.trim()).length} API Keys
+								</div>
+								<span className="text-gray-500 dark:text-gray-400 text-xs">
+									Multiple keys = better rate limits & automatic failover
+								</span>
+							</div>
+						)}
+
 						<p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
 							Get your free API key from{' '}
 							<a
@@ -680,6 +817,23 @@ const SrtForm: React.FC = () => {
 								Check API usage
 							</a>
 						</p>
+
+						{/* Multiple Keys Info */}
+						<div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+							<p className="text-sm text-blue-800 dark:text-blue-200">
+								<strong>💡 Pro Tip:</strong> Use multiple API keys for better
+								reliability!
+								<br />
+								<span className="text-xs">
+									The system automatically rotates between keys and puts failed
+									keys on 5-minute cooldown, ensuring uninterrupted translation
+									even with rate limits. Example:{' '}
+									<code className="bg-blue-100 dark:bg-blue-900 px-1 py-0.5 rounded">
+										key1,key2,key3
+									</code>
+								</span>
+							</p>
+						</div>
 					</div>
 				</div>
 
