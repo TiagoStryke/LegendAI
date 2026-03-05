@@ -1,8 +1,8 @@
 import type { Segment } from '@/types';
 import {
-    type ParsedEvent,
-    type ReconnectInterval,
-    createParser,
+	type ParsedEvent,
+	type ReconnectInterval,
+	createParser,
 } from 'eventsource-parser';
 
 /**
@@ -143,7 +143,7 @@ export async function groupSegmentsByTokenLength(
 ) {
 	// Lazy import tiktoken to avoid bundling issues
 	const { encoding_for_model } = await import('tiktoken');
-	
+
 	const groups: Segment[][] = [];
 	let currentGroup: Segment[] = [];
 	let currentGroupTokenCount = 0;

@@ -1,19 +1,19 @@
 'use client';
 
-import React, { FormEvent, useEffect, useState } from 'react';
-import type { ParsedSubtitle } from '@/lib/srt';
 import {
 	clearTranslationCache,
 	getCacheProgress,
 	initializeCache,
 	saveChunkToCache,
 } from '@/lib/cache';
+import type { ParsedSubtitle } from '@/lib/srt';
 import {
 	buildSRT,
 	chunkSubtitles,
 	parseSRT,
 	sampleValidation,
 } from '@/lib/srt';
+import React, { FormEvent, useEffect, useState } from 'react';
 
 interface FileTranslationState {
 	id: string;
