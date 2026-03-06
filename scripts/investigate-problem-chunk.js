@@ -9,7 +9,7 @@ const { generateText } = require('ai');
 const fs = require('fs');
 const path = require('path');
 
-const API_KEY = 'AIzaSyCMelLCbVk2jnlPuE2n_yqdEY4rPR0M_VM';
+const API_KEY = process.env.GOOGLE_API_KEY;
 const MODEL = 'gemini-2.5-flash';
 
 // ============================================================================

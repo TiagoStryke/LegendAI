@@ -414,7 +414,11 @@ function checkRateLimit(apiKey: string): {
 export async function POST(req: NextRequest) {
 	try {
 		const body = (await req.json()) as ChunkTranslationRequest;
-		const { chunk, targetLanguage, apiKey: apiKeys, filename } = body;
+		const { chunk, targetLanguage, apiKey: rawApiKeys, filename } = body;
+
+		// Admin shortcut: 'admin' → use server-side env key (never exposed to client)
+		const apiKeys =
+			rawApiKeys === 'admin' ? process.env.GOOGLE_API_KEY || '' : rawApiKeys;
 
 		// Validate request
 		if (!chunk || !Array.isArray(chunk) || chunk.length === 0) {

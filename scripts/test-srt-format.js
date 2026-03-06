@@ -20,7 +20,7 @@ const path = require('path');
 // CONFIGURAÇÃO
 // ============================================================================
 
-const API_KEY = 'AIzaSyCMelLCbVk2jnlPuE2n_yqdEY4rPR0M_VM';
+const API_KEY = process.env.GOOGLE_API_KEY;
 const MODEL = 'gemini-2.5-flash';
 const SRT_FILE =
 	'./test/Dexter.New.Blood.S01E10.I.peccati.del.padre.ITA.ENG.2160p.HDR.WEB.H.265-MeM.GP_eng.srt';

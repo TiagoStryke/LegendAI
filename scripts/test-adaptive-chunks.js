@@ -18,7 +18,7 @@ const path = require('path');
 // CONFIGURAÇÃO
 // ============================================================================
 
-const API_KEY = 'AIzaSyCMelLCbVk2jnlPuE2n_yqdEY4rPR0M_VM';
+const API_KEY = process.env.GOOGLE_API_KEY;
 const MODEL = 'gemini-2.5-flash';
 const TARGET_LANGUAGE = 'pt-BR';
 const SRT_FILE =
