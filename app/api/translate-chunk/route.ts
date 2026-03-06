@@ -211,11 +211,8 @@ function validateAndFixSRTResponse(
 		text: string;
 	}>;
 } {
-	const inputIndices = new Set(inputSegments.map((s) => s.index));
-	const outputIndices = new Set(outputSegments.map((s) => s.index));
-
-	// Check if segment count matches
-	if (inputIndices.size !== outputIndices.size) {
+	// Check if segment count matches (the only thing we trust the AI to preserve)
+	if (inputSegments.length !== outputSegments.length) {
 		return {
 			isValid: false,
 			timingsCorrected: 0,
@@ -231,35 +228,29 @@ function validateAndFixSRTResponse(
 		text: string;
 	}> = [];
 
-	for (const outputSeg of outputSegments) {
-		const inputSeg = inputSegments.find((s) => s.index === outputSeg.index);
+	// Positional assignment: input[i] owns index+timing, output[i] owns the translated text.
+	// This prevents wrong indices or timings from the AI from corrupting the final file,
+	// regardless of whether the AI renumbered segments or changed timestamps.
+	for (let i = 0; i < inputSegments.length; i++) {
+		const inputSeg = inputSegments[i];
+		const outputSeg = outputSegments[i];
 
-		if (inputSeg) {
-			const timingMatch =
-				inputSeg.startTime === outputSeg.startTime &&
-				inputSeg.endTime === outputSeg.endTime;
+		const timingMatch =
+			inputSeg.startTime === outputSeg.startTime &&
+			inputSeg.endTime === outputSeg.endTime &&
+			inputSeg.index === outputSeg.index;
 
-			if (!timingMatch) {
-				// 🔧 TIMING ERROR - Auto-correct
-				timingsCorrected++;
-				correctedSegments.push({
-					index: inputSeg.index,
-					startTime: inputSeg.startTime, // ✅ ORIGINAL TIMING
-					endTime: inputSeg.endTime, // ✅ ORIGINAL TIMING
-					text: outputSeg.text, // ✅ TRANSLATED TEXT
-				});
-			} else {
-				// ✅ Timing correct
-				correctedSegments.push(outputSeg);
-			}
-		} else {
-			// Segment not in input (shouldn't happen)
-			correctedSegments.push(outputSeg);
+		if (!timingMatch) {
+			timingsCorrected++;
 		}
-	}
 
-	// Sort by index
-	correctedSegments.sort((a, b) => a.index - b.index);
+		correctedSegments.push({
+			index: inputSeg.index, // ✅ ALWAYS from input
+			startTime: inputSeg.startTime, // ✅ ALWAYS from input
+			endTime: inputSeg.endTime, // ✅ ALWAYS from input
+			text: outputSeg.text, // ✅ TRANSLATED TEXT from AI
+		});
+	}
 
 	return {
 		isValid: true,

@@ -1,17 +1,17 @@
 'use client';
 
 import {
-	clearTranslationCache,
-	getCacheProgress,
-	initializeCache,
-	saveChunkToCache,
+    clearTranslationCache,
+    getCacheProgress,
+    initializeCache,
+    saveChunkToCache,
 } from '@/lib/cache';
 import type { ParsedSubtitle } from '@/lib/srt';
 import {
-	buildSRT,
-	chunkSubtitles,
-	parseSRT,
-	sampleValidation,
+    buildSRT,
+    chunkSubtitles,
+    parseSRT,
+    sampleValidation,
 } from '@/lib/srt';
 import React, { FormEvent, useEffect, useState } from 'react';
 
@@ -292,9 +292,18 @@ const SrtForm: React.FC = () => {
 						`✅ Chunk ${chunkIndex + 1}/${totalChunks} - using cache`,
 					);
 					const cachedChunk = cache.translatedChunks[chunkIndex];
-					// Copy cached chunk to result array
-					cachedChunk.forEach((sub) => {
-						translatedSubtitles[sub.index - 1] = sub;
+					// Positional assembly: use input chunk indices (never trust cached/AI indices)
+					const inputChunk = chunks[chunkIndex];
+					cachedChunk.forEach((translatedSub, i) => {
+						const inputSub = inputChunk?.[i];
+						if (inputSub) {
+							translatedSubtitles[inputSub.index - 1] = {
+								...inputSub,
+								text: translatedSub.text,
+							};
+						} else {
+							translatedSubtitles[translatedSub.index - 1] = translatedSub;
+						}
 					});
 
 					// Update progress
@@ -459,9 +468,17 @@ const SrtForm: React.FC = () => {
 					`✅ Chunk ${chunkIndex + 1}/${totalChunks} translated and cached`,
 				);
 
-				// Copy to result array
-				translatedChunk.forEach((sub) => {
-					translatedSubtitles[sub.index - 1] = sub;
+				// Positional assembly: use input chunk indices (never trust AI-returned indices)
+				translatedChunk.forEach((translatedSub, i) => {
+					const inputSub = chunk[i];
+					if (inputSub) {
+						translatedSubtitles[inputSub.index - 1] = {
+							...inputSub,
+							text: translatedSub.text,
+						};
+					} else {
+						translatedSubtitles[translatedSub.index - 1] = translatedSub;
+					}
 				});
 
 				// Update progress
