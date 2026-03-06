@@ -70,6 +70,8 @@ const SrtForm: React.FC = () => {
 	const [isProcessing, setIsProcessing] = useState<boolean>(false);
 	const [currentFileIndex, setCurrentFileIndex] = useState<number>(-1);
 	const [wakeLock, setWakeLock] = useState<any>(null); // WakeLockSentinel
+	const filesRef = React.useRef<FileTranslationState[]>([]); // Always up-to-date files (avoids stale closure)
+	const processedFilesRef = React.useRef<Set<string>>(new Set()); // Track processed files
 
 	// ===== WAKE LOCK: Mantém PC acordado SEMPRE enquanto site estiver aberto =====
 	useEffect(() => {
@@ -184,7 +186,11 @@ const SrtForm: React.FC = () => {
 		}
 
 		if (newFiles.length > 0) {
-			setFiles((prev) => [...prev, ...newFiles]);
+			setFiles((prev) => {
+				const next = [...prev, ...newFiles];
+				filesRef.current = next;
+				return next;
+			});
 		}
 	};
 
@@ -192,24 +198,32 @@ const SrtForm: React.FC = () => {
 		fileId: string,
 		updates: Partial<FileTranslationState>,
 	) => {
-		setFiles((prev) =>
-			prev.map((f) => (f.id === fileId ? { ...f, ...updates } : f)),
-		);
+		setFiles((prev) => {
+			const next = prev.map((f) =>
+				f.id === fileId ? { ...f, ...updates } : f,
+			);
+			filesRef.current = next; // Keep ref in sync
+			return next;
+		});
 	};
 
 	const processNextFile = async () => {
-		// Encontrar próximo arquivo pendente
-		const nextFileIndex = files.findIndex((f) => f.status === 'pending');
+		// Use filesRef to avoid stale closure — always has the latest state
+		const currentFiles = filesRef.current;
+		const nextFileIndex = currentFiles.findIndex(
+			(f) => f.status === 'pending' && !processedFilesRef.current.has(f.id),
+		);
 
 		if (nextFileIndex === -1) {
-			// Não há mais arquivos pendentes
 			setIsProcessing(false);
 			setCurrentFileIndex(-1);
+			processedFilesRef.current.clear();
 			return;
 		}
 
 		setCurrentFileIndex(nextFileIndex);
-		const fileState = files[nextFileIndex];
+		const fileState = currentFiles[nextFileIndex];
+		processedFilesRef.current.add(fileState.id);
 
 		await translateFile(fileState);
 
@@ -308,111 +322,162 @@ const SrtForm: React.FC = () => {
 				});
 
 				const chunk = chunks[chunkIndex];
-				let retries = 0;
-				const MAX_RETRIES = 5; // More retries for reliability
-				let translatedChunk: ParsedSubtitle[] | null = null;
 
-				while (retries < MAX_RETRIES && !translatedChunk) {
-					try {
-						const response = await fetch('/api/translate-chunk', {
-							method: 'POST',
-							headers: {
-								'Content-Type': 'application/json',
-							},
-							body: JSON.stringify({
-								chunk,
-								targetLanguage: language,
-								apiKey, // Can be multiple keys comma-separated
-								filename: fileState.file.name, // For context extraction
-							}),
-						});
+				// translateChunkWithFallback: on mismatch → split in half immediately (no retry waste).
+				// On 503/network errors → retry with backoff up to MAX_RETRIES.
+				const translateChunkWithFallback = async (
+					subChunk: ParsedSubtitle[],
+					label: string,
+				): Promise<ParsedSubtitle[]> => {
+					const MAX_RETRIES = 5;
+					let retries = 0;
 
-						if (!response.ok) {
-							if (response.status === 429) {
-								const data = await response.json();
-								const retryAfter = data.retryAfter || 60;
-								console.log(
-									`⏰ Rate limited on chunk ${chunkIndex + 1}, waiting ${retryAfter}s...`,
-								);
-								updateFileState(fileState.id, {
-									status: 'quota_error',
-									message: `Rate limited. Retrying chunk ${chunkIndex + 1}/${totalChunks} in ${retryAfter}s...`,
-									retryAfter,
-								});
-								await new Promise((resolve) =>
-									setTimeout(resolve, retryAfter * 1000),
-								);
-								retries++;
-								continue;
-							}
-							throw new Error(`HTTP ${response.status}`);
+					while (retries < MAX_RETRIES) {
+						let response: Response;
+						try {
+							response = await fetch('/api/translate-chunk', {
+								method: 'POST',
+								headers: { 'Content-Type': 'application/json' },
+								body: JSON.stringify({
+									chunk: subChunk,
+									targetLanguage: language,
+									apiKey,
+									filename: fileState.file.name,
+								}),
+							});
+						} catch (networkError) {
+							retries++;
+							if (retries >= MAX_RETRIES) throw networkError;
+							const backoff = Math.min(2000 * Math.pow(2, retries - 1), 30000);
+							console.error(
+								`❌ Network error on ${label}, retrying in ${backoff / 1000}s...`,
+							);
+							updateFileState(fileState.id, {
+								status: 'retry',
+								message: `Network error on ${label}. Retrying in ${backoff / 1000}s... (${retries}/${MAX_RETRIES})`,
+								retryAfter: Math.round(backoff / 1000),
+							});
+							await new Promise((r) => setTimeout(r, backoff));
+							continue;
+						}
+
+						if (response.status === 429) {
+							const data = await response.json();
+							const retryAfter = data.retryAfter || 60;
+							console.log(
+								`⏰ Rate limited on ${label}, waiting ${retryAfter}s...`,
+							);
+							updateFileState(fileState.id, {
+								status: 'quota_error',
+								message: `Rate limited. Retrying ${label} in ${retryAfter}s...`,
+								retryAfter,
+							});
+							await new Promise((r) => setTimeout(r, retryAfter * 1000));
+							retries++;
+							continue;
 						}
 
 						const data = await response.json();
 
-						if (!data.success) {
-							throw new Error(data.error || 'Translation failed');
-						}
-
-						translatedChunk = data.translatedChunk;
-
-						if (!translatedChunk) {
-							throw new Error('Empty translation result');
-						}
-
-						// Save to cache
-						saveChunkToCache(fileState.id, chunkIndex, translatedChunk);
-						console.log(
-							`✅ Chunk ${chunkIndex + 1}/${totalChunks} translated and cached`,
-						);
-
-						// Copy to result array
-						translatedChunk.forEach((sub) => {
-							translatedSubtitles[sub.index - 1] = sub;
-						});
-
-						// Update progress
-						const progress = Math.round(((chunkIndex + 1) / totalChunks) * 100);
-						updateFileState(fileState.id, {
-							status: 'translating',
-							percentage: progress,
-							currentChunk: chunkIndex + 1,
-							totalChunks,
-							translated: (chunkIndex + 1) * CHUNK_SIZE,
-							total: subtitles.length,
-							message: `Translated chunk ${chunkIndex + 1}/${totalChunks}`,
-						});
-
-						// More conservative delay between chunks (1.2s)
-						// This helps avoid hitting rate limits
-						await new Promise((resolve) => setTimeout(resolve, 1200));
-					} catch (error) {
-						retries++;
-						console.error(
-							`❌ Chunk ${chunkIndex + 1} failed (attempt ${retries}/${MAX_RETRIES}):`,
-							error,
-						);
-
-						if (retries >= MAX_RETRIES) {
-							throw new Error(
-								`Failed to translate chunk ${chunkIndex + 1} after ${MAX_RETRIES} attempts`,
+						// Mismatch: split in half immediately, no retry of original chunk
+						if (
+							!response.ok &&
+							data.error?.includes('Segment count mismatch') &&
+							subChunk.length > 1
+						) {
+							const mid = Math.ceil(subChunk.length / 2);
+							console.log(
+								`⚡ Mismatch on ${label} (${subChunk.length} subs) → splitting into ${mid} + ${subChunk.length - mid}`,
 							);
+							updateFileState(fileState.id, {
+								status: 'translating',
+								message: `Mismatch on ${label} → splitting into halves (${mid} + ${subChunk.length - mid} subs)...`,
+							});
+							const firstHalf = await translateChunkWithFallback(
+								subChunk.slice(0, mid),
+								`${label}a`,
+							);
+							const secondHalf = await translateChunkWithFallback(
+								subChunk.slice(mid),
+								`${label}b`,
+							);
+							return [...firstHalf, ...secondHalf];
 						}
 
-						// More aggressive exponential backoff
-						// 2s, 5s, 10s, 20s, 30s
-						const backoff = Math.min(2000 * Math.pow(2, retries - 1), 30000);
-						console.log(
-							`⏰ Retrying chunk ${chunkIndex + 1} in ${backoff / 1000}s...`,
-						);
-						updateFileState(fileState.id, {
-							status: 'retry',
-							message: `Retrying chunk ${chunkIndex + 1}/${totalChunks} in ${backoff / 1000}s... (attempt ${retries}/${MAX_RETRIES})`,
-							retryAfter: Math.round(backoff / 1000),
-						});
-						await new Promise((resolve) => setTimeout(resolve, backoff));
+						if (!response.ok) {
+							retries++;
+							if (retries >= MAX_RETRIES)
+								throw new Error(
+									`HTTP ${response.status}: ${data.error || 'Unknown'}`,
+								);
+							const backoff = Math.min(2000 * Math.pow(2, retries - 1), 30000);
+							console.error(
+								`❌ HTTP ${response.status} on ${label}, retrying in ${backoff / 1000}s...`,
+							);
+							updateFileState(fileState.id, {
+								status: 'retry',
+								message: `Error on ${label}. Retrying in ${backoff / 1000}s... (${retries}/${MAX_RETRIES})`,
+								retryAfter: Math.round(backoff / 1000),
+							});
+							await new Promise((r) => setTimeout(r, backoff));
+							continue;
+						}
+
+						if (!data.success) {
+							// success:false but not mismatch (shouldn't happen, but handle gracefully)
+							retries++;
+							if (retries >= MAX_RETRIES)
+								throw new Error(data.error || 'Translation failed');
+							const backoff = Math.min(2000 * Math.pow(2, retries - 1), 30000);
+							updateFileState(fileState.id, {
+								status: 'retry',
+								message: `Retrying ${label} in ${backoff / 1000}s... (${retries}/${MAX_RETRIES})`,
+								retryAfter: Math.round(backoff / 1000),
+							});
+							await new Promise((r) => setTimeout(r, backoff));
+							continue;
+						}
+
+						if (!data.translatedChunk)
+							throw new Error('Empty translation result');
+						return data.translatedChunk;
 					}
-				}
+
+					throw new Error(
+						`Failed to translate ${label} after ${MAX_RETRIES} attempts`,
+					);
+				};
+
+				const translatedChunk = await translateChunkWithFallback(
+					chunk,
+					`chunk ${chunkIndex + 1}/${totalChunks}`,
+				);
+
+				// Save to cache
+				saveChunkToCache(fileState.id, chunkIndex, translatedChunk);
+				console.log(
+					`✅ Chunk ${chunkIndex + 1}/${totalChunks} translated and cached`,
+				);
+
+				// Copy to result array
+				translatedChunk.forEach((sub) => {
+					translatedSubtitles[sub.index - 1] = sub;
+				});
+
+				// Update progress
+				const progress = Math.round(((chunkIndex + 1) / totalChunks) * 100);
+				updateFileState(fileState.id, {
+					status: 'translating',
+					percentage: progress,
+					currentChunk: chunkIndex + 1,
+					totalChunks,
+					translated: (chunkIndex + 1) * CHUNK_SIZE,
+					total: subtitles.length,
+					message: `Translated chunk ${chunkIndex + 1}/${totalChunks}`,
+				});
+
+				// Delay between chunks to avoid rate limits
+				await new Promise((resolve) => setTimeout(resolve, 1200));
 			}
 
 			// Step 5: Validate timing integrity
@@ -470,6 +535,7 @@ const SrtForm: React.FC = () => {
 			return; // Already processing
 		}
 
+		processedFilesRef.current.clear(); // Reset processed files tracker
 		setIsProcessing(true);
 		processNextFile();
 	};
@@ -505,11 +571,19 @@ const SrtForm: React.FC = () => {
 			}
 		}
 
-		setFiles((prev) => prev.filter((f) => f.id !== fileId));
+		setFiles((prev) => {
+			const next = prev.filter((f) => f.id !== fileId);
+			filesRef.current = next;
+			return next;
+		});
 	};
 
 	const handleClearCompleted = () => {
-		setFiles((prev) => prev.filter((f) => f.status !== 'complete'));
+		setFiles((prev) => {
+			const next = prev.filter((f) => f.status !== 'complete');
+			filesRef.current = next;
+			return next;
+		});
 	};
 
 	const handleClearAll = () => {
@@ -524,6 +598,8 @@ const SrtForm: React.FC = () => {
 			setIsProcessing(false);
 			setCurrentFileIndex(-1);
 		}
+		processedFilesRef.current.clear(); // Reset processed files tracker
+		filesRef.current = [];
 		setFiles([]);
 	};
 
