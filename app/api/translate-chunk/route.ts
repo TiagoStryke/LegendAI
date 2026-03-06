@@ -546,7 +546,7 @@ export async function POST(req: NextRequest) {
 					],
 					generationConfig: {
 						temperature: 0.3,
-						maxOutputTokens: 8192,
+						maxOutputTokens: 32000, // Increased for 100-subtitle chunks (each ~150 tokens = ~15k total)
 					},
 				}),
 			},
