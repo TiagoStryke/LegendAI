@@ -323,7 +323,16 @@ const SrtForm: React.FC = () => {
 								chunk,
 								targetLanguage: language,
 								apiKey, // Can be multiple keys comma-separated
-							filename: fileState.file.name, // For context extraction
+								filename: fileState.file.name, // For context extraction
+							}),
+						});
+
+						if (!response.ok) {
+							if (response.status === 429) {
+								const data = await response.json();
+								const retryAfter = data.retryAfter || 60;
+								console.log(
+									`⏰ Rate limited on chunk ${chunkIndex + 1}, waiting ${retryAfter}s...`,
 								);
 								updateFileState(fileState.id, {
 									status: 'quota_error',
