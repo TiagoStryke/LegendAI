@@ -1,8 +1,8 @@
 import type { Segment } from '@/types';
 import {
-	type ParsedEvent,
-	type ReconnectInterval,
-	createParser,
+    type ParsedEvent,
+    type ReconnectInterval,
+    createParser,
 } from 'eventsource-parser';
 
 /**
@@ -49,11 +49,33 @@ export function parseSRT(content: string): ParsedSubtitle[] {
  * Build SRT content from parsed subtitles
  */
 export function buildSRT(subtitles: ParsedSubtitle[]): string {
-	return subtitles
+	console.log(`
+═══════════════════════════════════════════════════════════
+🔨 BUILDING FINAL SRT
+═══════════════════════════════════════════════════════════
+Input subtitles count: ${subtitles.length}
+First index: ${subtitles[0]?.index}
+Last index: ${subtitles[subtitles.length - 1]?.index}
+All indices: ${subtitles.map((s) => s.index).join(', ')}
+═══════════════════════════════════════════════════════════
+	`);
+
+	const result = subtitles
 		.map((sub) => {
 			return `${sub.index}\n${sub.startTime} --> ${sub.endTime}\n${sub.text}\n`;
 		})
 		.join('\n');
+
+	console.log(`
+═══════════════════════════════════════════════════════════
+✅ SRT BUILD COMPLETE
+═══════════════════════════════════════════════════════════
+Output length: ${result.length} characters
+Number of entries: ${subtitles.length}
+═══════════════════════════════════════════════════════════
+	`);
+
+	return result;
 }
 
 /**
@@ -94,7 +116,24 @@ export function sampleValidation(
 ): { valid: boolean; errors: string[] } {
 	const errors: string[] = [];
 
+	console.log(`
+═══════════════════════════════════════════════════════════
+🔍 SAMPLE VALIDATION
+═══════════════════════════════════════════════════════════
+Original count: ${original.length}
+Translated count: ${translated.length}
+Original indices: [${original.map((s) => s.index).join(', ')}]
+Translated indices: [${translated.map((s) => s.index).join(', ')}]
+═══════════════════════════════════════════════════════════
+	`);
+
 	if (original.length !== translated.length) {
+		console.error(`
+❌❌❌ LENGTH MISMATCH DETECTED ❌❌❌
+Original: ${original.length} subtitles
+Translated: ${translated.length} subtitles
+Difference: ${translated.length - original.length} extra subtitle(s)
+		`);
 		errors.push(
 			`Length mismatch: original has ${original.length}, translated has ${translated.length}`,
 		);

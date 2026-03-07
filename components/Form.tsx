@@ -249,6 +249,17 @@ const SrtForm: React.FC = () => {
 				throw new Error('No subtitles found in file');
 			}
 
+			console.log(`
+═══════════════════════════════════════════════════════════
+🎬 PARSED ORIGINAL SRT
+═══════════════════════════════════════════════════════════
+Total subtitles: ${subtitles.length}
+First index: ${subtitles[0]?.index}
+Last index: ${subtitles[subtitles.length - 1]?.index}
+Index range: ${Math.min(...subtitles.map((s) => s.index))} to ${Math.max(...subtitles.map((s) => s.index))}
+═══════════════════════════════════════════════════════════
+			`);
+
 			// Step 2: Chunk subtitles into groups of 100 (REVOLUTIONARY IMPROVEMENT!)
 			// SRT format + auto-correction = 100% reliability with 6.5x speed boost 🚀
 			const CHUNK_SIZE = 100;
@@ -284,6 +295,11 @@ const SrtForm: React.FC = () => {
 
 			// Step 4: Translate missing chunks
 			const translatedSubtitles: ParsedSubtitle[] = new Array(subtitles.length);
+			let totalProcessedSubs = 0; // Track total subtitles added
+
+			console.log(
+				`📊 Starting translation: expecting ${subtitles.length} total subtitles`,
+			);
 
 			for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
 				// Check if chunk is already cached
@@ -292,19 +308,48 @@ const SrtForm: React.FC = () => {
 						`✅ Chunk ${chunkIndex + 1}/${totalChunks} - using cache`,
 					);
 					const cachedChunk = cache.translatedChunks[chunkIndex];
-					// Positional assembly: use input chunk indices (never trust cached/AI indices)
 					const inputChunk = chunks[chunkIndex];
+
+					console.log(
+						`📦 Chunk ${chunkIndex + 1}: input=${inputChunk.length}, cached=${cachedChunk.length}`,
+					);
+
+					// Detect if cached chunk has more subtitles than input
+					if (cachedChunk.length > inputChunk.length) {
+						console.error(
+							`❌ BUG: Cached chunk ${chunkIndex + 1} has ${cachedChunk.length} subs but input has ${inputChunk.length}!`,
+						);
+					}
+
+					if (cachedChunk.length < inputChunk.length) {
+						console.error(
+							`❌ BUG: Cached chunk ${chunkIndex + 1} has ${cachedChunk.length} subs but input expects ${inputChunk.length}!`,
+						);
+					}
+
+					// Positional assembly: use input chunk indices (never trust cached/AI indices)
+					let addedInThisChunk = 0;
 					cachedChunk.forEach((translatedSub, i) => {
 						const inputSub = inputChunk?.[i];
 						if (inputSub) {
+							// Only add if we have a corresponding input subtitle
 							translatedSubtitles[inputSub.index - 1] = {
 								...inputSub,
 								text: translatedSub.text,
 							};
+							addedInThisChunk++;
 						} else {
-							translatedSubtitles[translatedSub.index - 1] = translatedSub;
+							console.error(
+								`❌ BUG: Cached chunk ${chunkIndex + 1} has sub at position ${i} but input doesn't! (cachedChunk.length=${cachedChunk.length}, inputChunk.length=${inputChunk.length})`,
+							);
 						}
+						// If no inputSub (AI returned more than sent), IGNORE the extra
 					});
+
+					totalProcessedSubs += addedInThisChunk;
+					console.log(
+						`✅ Chunk ${chunkIndex + 1}: added ${addedInThisChunk} subs (total so far: ${totalProcessedSubs}/${subtitles.length})`,
+					);
 
 					// Update progress
 					const progress = Math.round(((chunkIndex + 1) / totalChunks) * 100);
@@ -467,6 +512,18 @@ const SrtForm: React.FC = () => {
 
 						if (!data.translatedChunk)
 							throw new Error('Empty translation result');
+
+						console.log(`
+─────────────────────────────────────────────────────────
+✅ API RESPONSE for ${label}
+─────────────────────────────────────────────────────────
+Sent: ${subChunk.length} subtitles
+Received: ${data.translatedChunk.length} subtitles
+Match: ${subChunk.length === data.translatedChunk.length ? '✅' : '❌'}
+Received indices: ${data.translatedChunk.map((s: any) => s.index).join(', ')}
+─────────────────────────────────────────────────────────
+						`);
+
 						return data.translatedChunk;
 					}
 
@@ -480,6 +537,23 @@ const SrtForm: React.FC = () => {
 					`chunk ${chunkIndex + 1}/${totalChunks}`,
 				);
 
+				console.log(
+					`📦 Chunk ${chunkIndex + 1}: input=${chunk.length}, translated=${translatedChunk.length}`,
+				);
+
+				// Detect if AI returned more subtitles than sent (hallucination bug)
+				if (translatedChunk.length > chunk.length) {
+					console.error(
+						`❌ BUG: AI returned ${translatedChunk.length} subs but we sent ${chunk.length}!`,
+					);
+				}
+
+				if (translatedChunk.length < chunk.length) {
+					console.error(
+						`❌ BUG: AI returned ${translatedChunk.length} subs but we expected ${chunk.length}!`,
+					);
+				}
+
 				// Save to cache
 				saveChunkToCache(fileState.id, chunkIndex, translatedChunk);
 				console.log(
@@ -487,17 +561,28 @@ const SrtForm: React.FC = () => {
 				);
 
 				// Positional assembly: use input chunk indices (never trust AI-returned indices)
+				let addedInThisChunk = 0;
 				translatedChunk.forEach((translatedSub, i) => {
 					const inputSub = chunk[i];
 					if (inputSub) {
+						// Only add if we have a corresponding input subtitle
 						translatedSubtitles[inputSub.index - 1] = {
 							...inputSub,
 							text: translatedSub.text,
 						};
+						addedInThisChunk++;
 					} else {
-						translatedSubtitles[translatedSub.index - 1] = translatedSub;
+						console.error(
+							`❌ BUG: Translated chunk ${chunkIndex + 1} has sub at position ${i} but input doesn't! (translatedChunk.length=${translatedChunk.length}, chunk.length=${chunk.length})`,
+						);
 					}
+					// If no inputSub (AI returned more than sent), IGNORE the extra
 				});
+
+				totalProcessedSubs += addedInThisChunk;
+				console.log(
+					`✅ Chunk ${chunkIndex + 1}: added ${addedInThisChunk} subs (total so far: ${totalProcessedSubs}/${subtitles.length})`,
+				);
 
 				// Update progress
 				const progress = Math.round(((chunkIndex + 1) / totalChunks) * 100);
@@ -516,8 +601,28 @@ const SrtForm: React.FC = () => {
 			}
 
 			// Step 5: Validate timing integrity
+			const nonEmptyCount = translatedSubtitles.filter((s) => s != null).length;
+			console.log(
+				`📊 Translation complete: processed ${totalProcessedSubs} subs, array has ${nonEmptyCount} non-empty slots, expected ${subtitles.length}`,
+			);
+			console.log(`📊 Array length: ${translatedSubtitles.length}`);
+
+			if (nonEmptyCount !== subtitles.length) {
+				console.error(
+					`❌ CRITICAL: Mismatch detected! processed=${totalProcessedSubs}, non-empty=${nonEmptyCount}, expected=${subtitles.length}`,
+				);
+			}
+
+			// Filter out any undefined/null entries (defensive programming)
+			const validTranslatedSubtitles = translatedSubtitles.filter(
+				(s) => s != null,
+			);
+			console.log(
+				`📊 After filtering nulls: ${validTranslatedSubtitles.length} valid subtitles`,
+			);
+
 			console.log('🔍 Validating translation integrity...');
-			const validation = sampleValidation(subtitles, translatedSubtitles);
+			const validation = sampleValidation(subtitles, validTranslatedSubtitles);
 
 			if (!validation.valid) {
 				console.error('❌ Validation failed:', validation.errors);
@@ -527,7 +632,10 @@ const SrtForm: React.FC = () => {
 			console.log('✅ Validation passed!');
 
 			// Step 6: Build final SRT
-			const finalSRT = buildSRT(translatedSubtitles);
+			console.log(
+				`📝 Building SRT file from ${validTranslatedSubtitles.length} subtitles...`,
+			);
+			const finalSRT = buildSRT(validTranslatedSubtitles);
 
 			updateFileState(fileState.id, {
 				status: 'complete',
