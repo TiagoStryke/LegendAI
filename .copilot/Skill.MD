@@ -355,12 +355,13 @@ async function waitForRateLimit(apiKey: string): Promise<void> {
 
 **Problem:** Free Gemini API has low quota that exhausts quickly.
 
-**Solution:** Track quota failures per key, cooldown 5 minutes before retrying.
+**Solution:** Track quota failures per key, cooldown 60 seconds before retrying (2 minutes for repeated failures).
 
 **Implementation:**
 ```typescript
 const quotaFailedKeys = new Map<string, number>(); // key -> failedAt timestamp
-const QUOTA_COOLDOWN_MS = 5 * 60 * 1000;
+const QUOTA_COOLDOWN_MS = 60 * 1000; // 60 seconds
+const MAX_CONSECUTIVE_FAILURES = 3;
 
 function markQuotaFailed(apiKey: string): void {
   quotaFailedKeys.set(apiKey, Date.now());
@@ -732,7 +733,7 @@ const CHUNK_SIZE = 10; // Reduced from 15
 
 **Solution:**
 - Add more API keys (rotate through multiple)
-- Wait 5 minutes for cooldown
+- Wait 1 minute for cooldown (automatic with key rotation)
 - Consider premium API (future)
 
 ---

@@ -373,12 +373,30 @@ const SrtForm: React.FC = () => {
 						if (response.status === 429) {
 							const data = await response.json();
 							const retryAfter = data.retryAfter || 60;
+							
+							// If there's key rotation available, retry immediately
+							// The server will pick another available key automatically
+							if (data.keyRotation && retries < 3) {
+								console.log(
+									`🔄 Key rotation: Retrying ${label} immediately with another key...`,
+								);
+								updateFileState(fileState.id, {
+									status: 'retry',
+									message: `Key failed, trying another key for ${label}...`,
+								});
+								// Small delay to avoid hammering (500ms instead of minutes)
+								await new Promise((r) => setTimeout(r, 500));
+								retries++;
+								continue;
+							}
+							
+							// All keys exhausted - need to wait
 							console.log(
-								`⏰ Rate limited on ${label}, waiting ${retryAfter}s...`,
+								`⏰ All keys exhausted for ${label}, waiting ${retryAfter}s...`,
 							);
 							updateFileState(fileState.id, {
 								status: 'quota_error',
-								message: `Rate limited. Retrying ${label} in ${retryAfter}s...`,
+								message: `All API keys exhausted. Retrying ${label} in ${retryAfter}s...`,
 								retryAfter,
 							});
 							await new Promise((r) => setTimeout(r, retryAfter * 1000));
@@ -922,7 +940,7 @@ const SrtForm: React.FC = () => {
 								<br />
 								<span className="text-xs">
 									The system automatically rotates between keys and puts failed
-									keys on 5-minute cooldown, ensuring uninterrupted translation
+									keys on 60-second cooldown, ensuring uninterrupted translation
 									even with rate limits. Example:{' '}
 									<code className="bg-blue-100 dark:bg-blue-900 px-1 py-0.5 rounded">
 										key1,key2,key3

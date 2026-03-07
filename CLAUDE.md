@@ -108,7 +108,7 @@ When working on a task, **always consult in this order**:
 1. **Gemini API Limits**
    - 400 tokens per chunk maximum (hardcoded limit)
    - 10 RPM (requests per minute) per API key
-   - Quota resets after 5 minutes of cooldown
+   - Quota cooldown: 60 seconds (2 minutes for repeated failures)
    - Always respect rate limits to avoid 429 errors
 
 2. **Vercel Constraints**

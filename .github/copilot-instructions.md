@@ -50,7 +50,7 @@ Extract metadata from filename (show name, season/episode, resolution) and inclu
 ### 4. Quota Management
 
 - Track API key quota failures
-- 5-minute cooldown before retrying failed key
+- 60-second cooldown before retrying failed key (2 min for repeated failures)
 - Rotate through multiple keys
 
 ### 5. Rate Limiting
@@ -264,7 +264,7 @@ vercel deploy --prod
 | --------------------- | ---------------------- | ------------------------------------------ |
 | Translation truncated | 400-token limit        | Reduce chunk size to 10                    |
 | Rate limit (429)      | >10 RPM                | Check `waitForRateLimit()`                 |
-| Quota exhausted       | Low free tier          | Add more keys, wait 5 min                  |
+| Quota exhausted       | Low free tier          | Add more keys, wait 1 min                  |
 | Dialogue concatenated | AI ignored format      | Already handled by `formatDialogueLines()` |
 | Timing mismatch       | AI modified timestamps | Validation rejects and retries             |
 

@@ -368,7 +368,8 @@ const rateLimiter: RateLimiter = {
 **Track quota failures per API key, implement cooldown.**
 
 ```typescript
-const QUOTA_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+const KEY_COOLDOWN_MS = 60 * 1000; // 60 seconds (2 min for repeated failures)
+const MAX_CONSECUTIVE_FAILURES = 3;
 const quotaFailedKeys = new Map<string, number>();
 
 function markQuotaFailed(apiKey: string): void {
@@ -380,7 +381,7 @@ function isKeyAvailable(apiKey: string): boolean {
 	if (!failedAt) return true;
 
 	const now = Date.now();
-	const cooldownRemaining = QUOTA_COOLDOWN_MS - (now - failedAt);
+	const cooldownRemaining = KEY_COOLDOWN_MS - (now - failedAt);
 
 	if (cooldownRemaining <= 0) {
 		// Cooldown expired, clear failure
@@ -413,7 +414,7 @@ try {
 		const nextKey = pickAvailableKey(apiKeys.filter((k) => k !== apiKey));
 
 		if (!nextKey) {
-			throw new Error('All API keys exhausted quota. Try again in 5 minutes.');
+			throw new Error('All API keys exhausted quota. Try again in 1 minute.');
 		}
 
 		// Retry with next key

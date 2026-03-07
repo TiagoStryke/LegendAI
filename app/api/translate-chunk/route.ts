@@ -7,10 +7,10 @@ import { NextRequest, NextResponse } from 'next/server';
  *
  * FEATURES:
  * - Multiple API keys with automatic rotation
- * - Per-key rate limiting (10 RPM conservative)
- * - Failed key cooldown (5 minutes)
+ * - Per-key rate limiting (8 RPM conservative)
+ * - Failed key cooldown (60s, 120s for repeated failures)
  * - Exponential backoff on errors
- * - SRT format with timing preservation (REVOLUTIONARY)
+ * - SRT format with timing preservation
  * - Auto-correction of timing errors
  */
 
@@ -51,7 +51,7 @@ const keyUsageMap = new Map<string, KeyUsage>();
 const RATE_LIMIT_RPM = 8; // Even more conservative: 8 RPM per key
 const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
 const MIN_DELAY_MS = 1000; // Minimum 1 second between requests
-const KEY_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes cooldown after failure
+const KEY_COOLDOWN_MS = 60 * 1000; // 60 seconds cooldown after failure (reduced from 5 min)
 const MAX_CONSECUTIVE_FAILURES = 3; // After 3 failures, longer cooldown
 
 /**
@@ -269,7 +269,7 @@ function isKeyAvailable(apiKey: string): boolean {
 	const now = Date.now();
 	const cooldownDuration =
 		usage.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES
-			? KEY_COOLDOWN_MS * 2 // Double cooldown for repeatedly failing keys
+			? KEY_COOLDOWN_MS * 2 // Double cooldown (2 min) for repeatedly failing keys
 			: KEY_COOLDOWN_MS;
 
 	if (now - usage.failedAt < cooldownDuration) {
@@ -430,12 +430,32 @@ export async function POST(req: NextRequest) {
 		const keySelection = selectBestKey(apiKeys);
 
 		if (!keySelection) {
-			// All keys in cooldown
+			// All keys in cooldown - calculate shortest remaining cooldown
+			const keys = apiKeys.split(',').map((k) => k.trim()).filter(Boolean);
+			const now = Date.now();
+			let shortestCooldown = KEY_COOLDOWN_MS;
+
+			for (const key of keys) {
+				const usage = keyUsageMap.get(key);
+				if (usage?.failedAt) {
+					const cooldownDuration = usage.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES
+						? KEY_COOLDOWN_MS * 2
+						: KEY_COOLDOWN_MS;
+					const remainingCooldown = cooldownDuration - (now - usage.failedAt);
+					if (remainingCooldown > 0 && remainingCooldown < shortestCooldown) {
+						shortestCooldown = remainingCooldown;
+					}
+				}
+			}
+
+			const retryAfterSeconds = Math.ceil(shortestCooldown / 1000);
+			console.log(`⚠️ All ${keys.length} keys in cooldown, shortest wait: ${retryAfterSeconds}s`);
+
 			return NextResponse.json(
 				{
 					success: false,
-					error: 'All API keys are temporarily unavailable (cooldown)',
-					retryAfter: 60,
+					error: `All ${keys.length} API keys temporarily unavailable`,
+					retryAfter: retryAfterSeconds,
 				},
 				{ status: 429 },
 			);
@@ -560,22 +580,29 @@ export async function POST(req: NextRequest) {
 				markKeyFailed(selectedKey);
 
 				// Try to provide helpful error message
-				let retryAfter = 60;
+				let retryAfter = 30; // Default: 30s for rate limit
 				try {
 					const errorData = JSON.parse(errorText);
 					if (errorData.error?.message?.includes('quota')) {
 						console.log(
-							`💤 Key #${keyIndex + 1} quota exhausted (5 min cooldown)`,
+							`💤 Key #${keyIndex + 1} quota exhausted (60s cooldown)`,
 						);
-						retryAfter = 300; // 5 minutes for quota errors
+						retryAfter = 60; // 60 seconds for quota errors
 					}
 				} catch {}
+
+				// Don't return error immediately - the system auto-rotates to next available key
+				// Only fail if ALL keys are exhausted (checked by selectBestKey())
+				console.log(
+					`⚠️ Key #${keyIndex + 1} failed, will use another key automatically`,
+				);
 
 				return NextResponse.json(
 					{
 						success: false,
-						error: `API key #${keyIndex + 1} quota exceeded`,
+						error: `API key #${keyIndex + 1} failed, try another key`,
 						retryAfter,
+						keyRotation: true, // Signal that client should retry (another key may work)
 					},
 					{ status: 429 },
 				);
