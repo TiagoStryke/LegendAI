@@ -373,7 +373,7 @@ const SrtForm: React.FC = () => {
 						if (response.status === 429) {
 							const data = await response.json();
 							const retryAfter = data.retryAfter || 60;
-							
+
 							// If there's key rotation available, retry immediately
 							// The server will pick another available key automatically
 							if (data.keyRotation && retries < 3) {
@@ -389,7 +389,7 @@ const SrtForm: React.FC = () => {
 								retries++;
 								continue;
 							}
-							
+
 							// All keys exhausted - need to wait
 							console.log(
 								`⏰ All keys exhausted for ${label}, waiting ${retryAfter}s...`,

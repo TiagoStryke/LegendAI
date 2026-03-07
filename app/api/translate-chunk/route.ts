@@ -431,16 +431,20 @@ export async function POST(req: NextRequest) {
 
 		if (!keySelection) {
 			// All keys in cooldown - calculate shortest remaining cooldown
-			const keys = apiKeys.split(',').map((k) => k.trim()).filter(Boolean);
+			const keys = apiKeys
+				.split(',')
+				.map((k) => k.trim())
+				.filter(Boolean);
 			const now = Date.now();
 			let shortestCooldown = KEY_COOLDOWN_MS;
 
 			for (const key of keys) {
 				const usage = keyUsageMap.get(key);
 				if (usage?.failedAt) {
-					const cooldownDuration = usage.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES
-						? KEY_COOLDOWN_MS * 2
-						: KEY_COOLDOWN_MS;
+					const cooldownDuration =
+						usage.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES
+							? KEY_COOLDOWN_MS * 2
+							: KEY_COOLDOWN_MS;
 					const remainingCooldown = cooldownDuration - (now - usage.failedAt);
 					if (remainingCooldown > 0 && remainingCooldown < shortestCooldown) {
 						shortestCooldown = remainingCooldown;
@@ -449,7 +453,9 @@ export async function POST(req: NextRequest) {
 			}
 
 			const retryAfterSeconds = Math.ceil(shortestCooldown / 1000);
-			console.log(`⚠️ All ${keys.length} keys in cooldown, shortest wait: ${retryAfterSeconds}s`);
+			console.log(
+				`⚠️ All ${keys.length} keys in cooldown, shortest wait: ${retryAfterSeconds}s`,
+			);
 
 			return NextResponse.json(
 				{
