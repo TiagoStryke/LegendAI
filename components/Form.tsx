@@ -1,18 +1,19 @@
 'use client';
 
 import {
-    clearTranslationCache,
-    getCacheProgress,
-    initializeCache,
-    saveChunkToCache,
+	clearTranslationCache,
+	getCacheProgress,
+	initializeCache,
+	saveChunkToCache,
 } from '@/lib/cache';
 import type { ParsedSubtitle } from '@/lib/srt';
 import {
-    buildSRT,
-    chunkSubtitles,
-    parseSRT,
-    sampleValidation,
+	buildSRT,
+	chunkSubtitles,
+	parseSRT,
+	sampleValidation,
 } from '@/lib/srt';
+import JSZip from 'jszip';
 import React, { FormEvent, useEffect, useState } from 'react';
 
 interface FileTranslationState {
@@ -705,6 +706,50 @@ Received indices: ${data.translatedChunk.map((s: any) => s.index).join(', ')}
 		URL.revokeObjectURL(url);
 	};
 
+	const handleDownloadAll = async () => {
+		const completedFiles = files.filter(
+			(f) => f.status === 'complete' && f.result,
+		);
+
+		if (completedFiles.length === 0) {
+			alert('No completed translations available.');
+			return;
+		}
+
+		if (completedFiles.length === 1) {
+			// If only one file, just download it directly
+			handleDownload(completedFiles[0].id);
+			return;
+		}
+
+		try {
+			const zip = new JSZip();
+
+			// Add each translated file to the ZIP
+			completedFiles.forEach((fileState) => {
+				const filename = fileState.file.name.replace('.srt', '.pt.srt');
+				zip.file(filename, fileState.result!);
+			});
+
+			// Generate ZIP file
+			const content = await zip.generateAsync({ type: 'blob' });
+
+			// Download ZIP
+			const url = URL.createObjectURL(content);
+			const link = document.createElement('a');
+			link.href = url;
+			link.download = `legendai-translations-${new Date().toISOString().split('T')[0]}.zip`;
+
+			document.body.appendChild(link);
+			link.click();
+			document.body.removeChild(link);
+			URL.revokeObjectURL(url);
+		} catch (error) {
+			console.error('Error creating ZIP:', error);
+			alert('Error creating ZIP file. Please try again.');
+		}
+	};
+
 	const handleRemoveFile = (fileId: string) => {
 		if (isProcessing) {
 			const fileState = files.find((f) => f.id === fileId);
@@ -819,6 +864,15 @@ Received indices: ${data.translatedChunk.map((s: any) => s.index).join(', ')}
 									Files ({files.length})
 								</h3>
 								<div className="space-x-3">
+									{files.filter((f) => f.status === 'complete').length > 0 && (
+										<button
+											type="button"
+											onClick={handleDownloadAll}
+											className="text-sm bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded transition-colors font-medium"
+										>
+											⬇️ Download All
+										</button>
+									)}
 									<button
 										type="button"
 										onClick={handleClearCompleted}
